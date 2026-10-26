@@ -1,0 +1,36 @@
+name: Studix
+options:
+  bundleIdPrefix: com.mecha
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation
+    from: 0.9.19
+targets:
+  Studix:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    dependencies:
+      - package: ZIPFoundation
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: Studix
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSCameraUsageDescription: لمسح المستندات وتحويلها إلى PDF
+        NSMicrophoneUsageDescription: لتسجيل المحاضرات
+        NSFaceIDUsageDescription: لقفل التطبيق
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mecha.studix
+        PRODUCT_NAME: Studix
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: 5.0
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
