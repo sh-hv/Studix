@@ -29,6 +29,27 @@ jobs:
           open('Sources/Assets.xcassets/AppIcon.appiconset/icon.png', 'wb').write(png)
           PY
 
+      - name: Normalize icons
+        run: |
+          python3 -m pip install --quiet --break-system-packages pillow
+          python3 - <<'PY'
+          import os
+          from PIL import Image
+          D = 'Sources/Assets.xcassets/AppIcon.appiconset'
+          fill = {'icon.png': (255, 255, 255), 'icon-dark.png': (0, 0, 0), 'icon-tinted.png': (0, 0, 0)}
+          for name, color in fill.items():
+              path = f'{D}/{name}'
+              if not os.path.exists(path):
+                  continue
+              image = Image.open(path).convert('RGBA')
+              flat = Image.new('RGBA', image.size, color + (255,))
+              flat.alpha_composite(image)
+              result = flat.convert('RGB').resize((1024, 1024))
+              if name == 'icon-tinted.png':
+                  result = result.convert('L').convert('RGB')
+              result.save(path)
+          PY
+
       - name: Generate project
         run: |
           brew install xcodegen
@@ -39,7 +60,7 @@ jobs:
           xcodebuild -project Studix.xcodeproj -scheme Studix -configuration Release \
             -sdk iphoneos -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            CURRENT_PROJECT_VERSION=${{ github.run_number }} build
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} build > build.log 2>&1 || { grep -E "error:" build.log | sort -u | head -20; exit 1; }
 
       - name: Package IPA
         run: |
