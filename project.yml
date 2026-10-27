@@ -1,5 +1,6 @@
 name: Studix
 options:
+  developmentLanguage: ar
   bundleIdPrefix: com.mecha
   deploymentTarget:
     iOS: "16.0"
@@ -18,13 +19,15 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: Studix
+        CFBundleDevelopmentRegion: ar
+        CFBundleLocalizations: [ar, en]
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSCameraUsageDescription: لمسح المستندات وتحويلها إلى PDF
         NSMicrophoneUsageDescription: لتسجيل المحاضرات
-        NSFaceIDUsageDescription: لقفل التطبيق
+        UIBackgroundModes: [audio]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mecha.studix
