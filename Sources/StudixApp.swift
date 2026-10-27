@@ -6,10 +6,8 @@ struct StudixApp: App {
 
     var body: some Scene {
         WindowGroup {
-            LockGate { RootView() }
+            RootView()
                 .environmentObject(store)
-                .environment(\.layoutDirection, .rightToLeft)
-                .environment(\.locale, Locale(identifier: "ar"))
                 .tint(Theme.accent)
         }
     }
