@@ -7,6 +7,7 @@ struct SubjectsView: View {
     @EnvironmentObject var store: Store
     @State var adding = false
     @State var query = ""
+    @State var editingSubject: Subject?
     let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
 
     var body: some View {
@@ -23,6 +24,7 @@ struct SubjectsView: View {
                         NavigationLink(value: subject) { SubjectCard(subject: subject) }
                             .buttonStyle(.plain)
                             .contextMenu {
+                                Button { editingSubject = subject } label: { Label("تعديل المادة", systemImage: "pencil") }
                                 Button(role: .destructive) { store.deleteSubject(subject) } label: {
                                     Label("حذف المادة", systemImage: "trash")
                                 }
@@ -41,7 +43,8 @@ struct SubjectsView: View {
                 Button { adding = true } label: { Image(systemName: "plus.circle.fill").font(.title3) }
             }
         }
-        .sheet(isPresented: $adding) { NewSubjectSheet() }
+        .sheet(isPresented: $adding) { SubjectSheet() }
+        .sheet(item: $editingSubject) { SubjectSheet(subject: $0) }
     }
 }
 
@@ -60,6 +63,9 @@ struct SubjectCard: View {
             Spacer(minLength: 18)
             Text(subject.name).font(.headline).lineLimit(2)
             Text("\(count) عنصر").font(.caption).opacity(0.85)
+            if let summary = subject.gradeSummary {
+                Text(summary).font(.caption2.weight(.semibold)).opacity(0.95)
+            }
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, minHeight: 140, alignment: .leading)
@@ -91,43 +97,105 @@ struct SubjectDetail: View {
     }
 }
 
-struct NewSubjectSheet: View {
+func parseNumber(_ text: String) -> Double? {
+    let digits = Array("٠١٢٣٤٥٦٧٨٩")
+    var result = ""
+    for character in text.replacingOccurrences(of: "٫", with: ".").replacingOccurrences(of: ",", with: ".") {
+        if let index = digits.firstIndex(of: character) {
+            result.append(String(index))
+        } else {
+            result.append(character)
+        }
+    }
+    return Double(result)
+}
+
+struct GradeFields {
+    var max = ""
+    var score = ""
+
+    init(_ grade: Grade?) {
+        guard let grade else { return }
+        max = Grade.fmt(grade.max)
+        score = grade.score.map(Grade.fmt) ?? ""
+    }
+
+    var grade: Grade? {
+        guard let maxValue = parseNumber(max), maxValue > 0 else { return nil }
+        return Grade(max: maxValue, score: parseNumber(score))
+    }
+}
+
+struct SubjectSheet: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) var dismiss
-    @State var name = ""
-    @State var colorIndex = 0
+    @State var subject: Subject
+    @State var theoryOn: Bool
+    @State var practicalOn: Bool
+    @State var theory: GradeFields
+    @State var practical: GradeFields
+    let isNew: Bool
+
+    init(subject: Subject? = nil) {
+        let base = subject ?? Subject(name: "", colorIndex: 0)
+        _subject = State(initialValue: base)
+        _theoryOn = State(initialValue: base.theory != nil)
+        _practicalOn = State(initialValue: base.practical != nil)
+        _theory = State(initialValue: GradeFields(base.theory))
+        _practical = State(initialValue: GradeFields(base.practical))
+        isNew = subject == nil
+    }
 
     var body: some View {
         NavigationStack {
             Form {
-                TextField("اسم المادة", text: $name)
+                TextField("اسم المادة", text: $subject.name)
                 Section("اللون") {
                     HStack {
                         ForEach(Theme.palette.indices, id: \.self) { index in
                             Circle()
                                 .fill(Theme.palette[index])
                                 .frame(width: 28, height: 28)
-                                .overlay(Circle().stroke(.primary, lineWidth: colorIndex == index ? 3 : 0).padding(-4))
-                                .onTapGesture { colorIndex = index }
+                                .overlay(Circle().stroke(.primary, lineWidth: subject.colorIndex == index ? 3 : 0).padding(-4))
+                                .onTapGesture { subject.colorIndex = index }
                                 .frame(maxWidth: .infinity)
                         }
                     }
                 }
+                Section("الدرجات (اختياري)") {
+                    Toggle("إضافة نظري", isOn: $theoryOn)
+                    if theoryOn { fields($theory) }
+                    Toggle("إضافة عملي", isOn: $practicalOn)
+                    if practicalOn { fields($practical) }
+                }
             }
-            .navigationTitle("مادة جديدة")
+            .navigationTitle(LocalizedStringKey(isNew ? "مادة جديدة" : "تعديل المادة"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("إضافة") {
-                        store.addSubject(name: name.trimmingCharacters(in: .whitespaces), colorIndex: colorIndex)
-                        dismiss()
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button(LocalizedStringKey(isNew ? "إضافة" : "حفظ")) { save() }
+                        .disabled(subject.name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 ToolbarItem(placement: .cancellationAction) { Button("إلغاء") { dismiss() } }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.large])
+    }
+
+    func fields(_ binding: Binding<GradeFields>) -> some View {
+        HStack {
+            TextField("الدرجة العظمى", text: binding.max).keyboardType(.decimalPad)
+            Divider()
+            TextField("حصلت عليها", text: binding.score).keyboardType(.decimalPad)
+        }
+    }
+
+    func save() {
+        subject.name = subject.name.trimmingCharacters(in: .whitespaces)
+        subject.theory = theoryOn ? theory.grade : nil
+        subject.practical = practicalOn ? practical.grade : nil
+        if isNew { store.addSubject(subject) } else { store.updateSubject(subject) }
+        dismiss()
     }
 }
 
@@ -144,6 +212,7 @@ struct ItemListView: View {
     @State var showPhotos = false
     @State var showImporter = false
     @State var photos: [PhotosPickerItem] = []
+    @State var batch: ScanBatch?
 
     var active: UUID? { subject ?? filter }
 
@@ -175,7 +244,14 @@ struct ItemListView: View {
         .toolbar { ToolbarItem(placement: .primaryAction) { addButton } }
         .sheet(item: $editing) { EditItemSheet(item: $0) }
         .sheet(isPresented: $showScanner) {
-            DocumentScanner { savePDF(PDFMaker.make($0)) }.ignoresSafeArea()
+            DocumentScanner { images in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { batch = ScanBatch(images: images) }
+            }
+            .ignoresSafeArea()
+        }
+        .sheet(item: $batch) { batch in
+            ScanEditor(pages: batch.images) { savePDF(PDFMaker.make($0)) }
+                .interactiveDismissDisabled()
         }
         .sheet(isPresented: $showRecorder) { RecorderView(subject: active) }
         .fullScreenCover(item: $opened) { item in
@@ -194,7 +270,7 @@ struct ItemListView: View {
     var chips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack {
-                chip("الكل", id: nil)
+                chip(String(localized: "الكل"), id: nil)
                 ForEach(store.library.subjects) { chip($0.name, id: $0.id) }
             }
         }
@@ -257,7 +333,7 @@ struct ItemListView: View {
                 }
             }
             photos = []
-            if !images.isEmpty { savePDF(PDFMaker.make(images)) }
+            if !images.isEmpty { batch = ScanBatch(images: images) }
         }
     }
 
@@ -273,7 +349,7 @@ struct ItemListView: View {
     }
 
     func newNote(_ template: String) {
-        let item = Item(subjectID: active, kind: .note, title: defaultTitle("ملاحظة"), file: store.newFile(ext: "drawing"), template: template)
+        let item = Item(subjectID: active, kind: .note, title: defaultTitle("ملاحظة"), file: store.newFile(ext: "note"), template: template)
         store.add(item)
         opened = item
     }
@@ -348,7 +424,7 @@ struct EditItemSheet: View {
 
 struct EmptyState: View {
     let icon: String
-    let text: String
+    let text: LocalizedStringKey
 
     var body: some View {
         VStack(spacing: 14) {
