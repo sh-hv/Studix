@@ -1,10 +1,24 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct ShareFile: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
 struct SettingsView: View {
     @EnvironmentObject var store: Store
-    @AppStorage("lockEnabled") var lockEnabled = false
-    @State var backupURL: URL?
+    @State var shareItem: ShareFile?
     @State var pickedURL: URL?
     @State var importing = false
     @State var confirming = false
@@ -17,19 +31,12 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
-                Button { makeBackup() } label: { Label("إنشاء نسخة احتياطية", systemImage: "archivebox.fill") }
-                if let backupURL {
-                    ShareLink(item: backupURL) { Label("حفظ أو مشاركة النسخة", systemImage: "square.and.arrow.up") }
-                }
+                Button { makeBackup() } label: { Label("نسخ احتياطي وحفظ الملف", systemImage: "archivebox.fill") }
                 Button { importing = true } label: { Label("استرجاع من نسخة", systemImage: "arrow.counterclockwise") }
             } header: {
                 Text("النسخ الاحتياطي")
             } footer: {
                 Text("تُحفظ كل مواد الدراسة والمستندات والتسجيلات والملاحظات في ملف مضغوط واحد.")
-            }
-
-            Section {
-                Toggle(isOn: $lockEnabled) { Label("قفل التطبيق بـ Face ID", systemImage: "faceid") }
             }
 
             Section("الإحصائيات") {
@@ -44,6 +51,7 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("الإعدادات")
+        .sheet(item: $shareItem) { ShareSheet(url: $0.url) }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.zip]) { result in
             if case .success(let url) = result {
                 pickedURL = url
@@ -62,7 +70,7 @@ struct SettingsView: View {
 
     func makeBackup() {
         do {
-            backupURL = try store.backup()
+            shareItem = ShareFile(url: try store.backup())
         } catch {
             message = error.localizedDescription
         }
@@ -74,7 +82,7 @@ struct SettingsView: View {
         defer { if granted { url.stopAccessingSecurityScopedResource() } }
         do {
             try store.restore(from: url)
-            message = "تم الاسترجاع بنجاح"
+            message = String(localized: "تم الاسترجاع بنجاح")
         } catch {
             message = error.localizedDescription
         }
