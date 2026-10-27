@@ -49,12 +49,18 @@ final class PDFReader: ObservableObject {
     let view = PDFView()
     var url: URL?
 
-    func open(_ url: URL) {
+    func open(_ url: URL, page: Int = 0) {
         self.url = url
         view.document = PDFDocument(url: url)
         view.autoScales = true
         view.displayMode = .singlePageContinuous
         view.displayDirection = .vertical
+        if page > 0, let target = view.document?.page(at: page) { view.go(to: target) }
+    }
+
+    var currentPage: Int {
+        guard let page = view.currentPage, let index = view.document?.index(for: page) else { return 0 }
+        return index
     }
 
     func highlight() {
@@ -89,6 +95,9 @@ struct PDFScreen: View {
     var body: some View {
         PDFRepresentable(view: reader.view)
             .ignoresSafeArea(edges: .bottom)
+            .overlay(alignment: .bottomLeading) {
+                if let subject = item.subjectID { MiniPlayer(subject: subject) }
+            }
             .navigationTitle(item.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -97,7 +106,10 @@ struct PDFScreen: View {
                     ShareLink(item: store.url(for: item))
                 }
             }
-            .onAppear { reader.open(store.url(for: item)) }
-            .onDisappear { reader.save() }
+            .onAppear { reader.open(store.url(for: item), page: Int(item.progress ?? 0)) }
+            .onDisappear {
+                reader.save()
+                store.setProgress(Double(reader.currentPage), for: item.id)
+            }
     }
 }
