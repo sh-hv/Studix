@@ -7,9 +7,9 @@ enum ItemKind: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .document: return "المستندات"
-        case .recording: return "التسجيلات"
-        case .note: return "الملاحظات"
+        case .document: return String(localized: "المستندات")
+        case .recording: return String(localized: "التسجيلات")
+        case .note: return String(localized: "الملاحظات")
         }
     }
     var icon: String {
@@ -25,6 +25,34 @@ struct Subject: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String
     var colorIndex: Int
+    var theory: Grade?
+    var practical: Grade?
+}
+
+struct Grade: Codable, Hashable {
+    var max: Double
+    var score: Double?
+
+    static func fmt(_ value: Double) -> String {
+        value.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    var text: String {
+        let got = score.map(Grade.fmt) ?? "–"
+        return got + "/" + Grade.fmt(max)
+    }
+}
+
+extension Subject {
+    var gradeSummary: String? {
+        var parts: [String] = []
+        if let theory { parts.append(String(localized: "نظري") + " " + theory.text) }
+        if let practical { parts.append(String(localized: "عملي") + " " + practical.text) }
+        if let theory, let practical, let a = theory.score, let b = practical.score {
+            parts.append(String(localized: "المجموع") + " " + Grade.fmt(a + b) + "/" + Grade.fmt(theory.max + practical.max))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 }
 
 struct Item: Identifiable, Codable, Hashable {
@@ -37,6 +65,7 @@ struct Item: Identifiable, Codable, Hashable {
     var marks: [Double]?
     var template: String?
     var text: String?
+    var progress: Double?
 }
 
 struct Library: Codable {
@@ -48,11 +77,11 @@ struct Library: Codable {
 
 enum BackupError: LocalizedError {
     case invalid
-    var errorDescription: String? { "الملف ليس نسخة احتياطية صالحة" }
+    var errorDescription: String? { String(localized: "الملف ليس نسخة احتياطية صالحة") }
 }
 
-func defaultTitle(_ prefix: String) -> String {
-    prefix + " " + Date().formatted(.dateTime.day().month().hour().minute())
+func defaultTitle(_ prefix: String.LocalizationValue) -> String {
+    String(localized: prefix) + " " + Date().formatted(.dateTime.day().month().hour().minute())
 }
 
 @MainActor
@@ -106,6 +135,13 @@ final class Store: ObservableObject {
     }
 
     func delete(_ item: Item) {
+        if item.kind == .note,
+           let data = try? Data(contentsOf: url(for: item)),
+           let note = try? JSONDecoder().decode(NoteContent.self, from: data) {
+            for file in note.blocks.compactMap(\.file) {
+                try? FileManager.default.removeItem(at: Self.root.appendingPathComponent(file))
+            }
+        }
         try? FileManager.default.removeItem(at: url(for: item))
         library.items.removeAll { $0.id == item.id }
         save()
@@ -113,6 +149,23 @@ final class Store: ObservableObject {
 
     func addSubject(name: String, colorIndex: Int) {
         library.subjects.append(Subject(name: name, colorIndex: colorIndex))
+        save()
+    }
+
+    func addSubject(_ subject: Subject) {
+        library.subjects.append(subject)
+        save()
+    }
+
+    func updateSubject(_ subject: Subject) {
+        guard let index = library.subjects.firstIndex(where: { $0.id == subject.id }) else { return }
+        library.subjects[index] = subject
+        save()
+    }
+
+    func setProgress(_ value: Double, for id: UUID) {
+        guard let index = library.items.firstIndex(where: { $0.id == id }) else { return }
+        library.items[index].progress = value
         save()
     }
 
@@ -134,6 +187,7 @@ final class Store: ObservableObject {
     }
 
     func deleteDeadline(_ deadline: Deadline) {
+        Reminders.cancel(deadline)
         library.deadlines?.removeAll { $0.id == deadline.id }
         save()
     }
