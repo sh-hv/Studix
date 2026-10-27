@@ -7,9 +7,12 @@ func clock(_ time: Double) -> String {
 
 @MainActor
 final class RecorderModel: ObservableObject {
+    enum State { case idle, recording, paused }
+
     @Published var elapsed: TimeInterval = 0
     @Published var marks: [Double] = []
-    @Published var isRecording = false
+    @Published var levels: [Float] = []
+    @Published var state = State.idle
     var recorder: AVAudioRecorder?
     var timer: Timer?
 
@@ -28,12 +31,33 @@ final class RecorderModel: ObservableObject {
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
         ]
         recorder = try? AVAudioRecorder(url: url, settings: settings)
+        recorder?.isMeteringEnabled = true
         guard recorder?.record() == true else { return false }
-        isRecording = true
-        timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.elapsed = self?.recorder?.currentTime ?? 0 }
+        state = .recording
+        timer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
         }
         return true
+    }
+
+    func tick() {
+        guard let recorder, state == .recording else { return }
+        recorder.updateMeters()
+        elapsed = recorder.currentTime
+        let level = max(0.05, min(1, (recorder.averagePower(forChannel: 0) + 50) / 50))
+        levels.append(level)
+        if levels.count > 90 { levels.removeFirst() }
+    }
+
+    func togglePause() {
+        guard let recorder else { return }
+        if state == .recording {
+            recorder.pause()
+            state = .paused
+        } else {
+            recorder.record()
+            state = .recording
+        }
     }
 
     func mark() { marks.append(elapsed) }
@@ -41,8 +65,26 @@ final class RecorderModel: ObservableObject {
     func stop() {
         recorder?.stop()
         timer?.invalidate()
-        isRecording = false
+        state = .idle
         try? AVAudioSession.sharedInstance().setActive(false)
+    }
+}
+
+struct Waveform: View {
+    let levels: [Float]
+
+    var body: some View {
+        GeometryReader { geometry in
+            HStack(alignment: .center, spacing: 3) {
+                ForEach(levels.indices, id: \.self) { index in
+                    Capsule()
+                        .fill(Theme.accent.gradient)
+                        .frame(width: 3, height: max(4, CGFloat(levels[index]) * geometry.size.height))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+        }
+        .environment(\.layoutDirection, .leftToRight)
     }
 }
 
@@ -64,18 +106,53 @@ struct RecorderView: View {
             Text(clock(model.elapsed))
                 .font(.system(size: 64, weight: .light, design: .rounded))
                 .monospacedDigit()
+            Waveform(levels: model.levels)
+                .frame(height: 90)
+                .padding(.horizontal)
             Label("\(model.marks.count) علامة", systemImage: "flag.fill")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .opacity(model.marks.isEmpty ? 0 : 1)
             Spacer()
-            HStack(spacing: 40) {
+            controls
+                .padding(.bottom, 24)
+        }
+        .padding()
+        .interactiveDismissDisabled(model.state != .idle)
+        .alert("لا يوجد إذن للميكروفون", isPresented: $denied) {
+            Button("حسنًا") { dismiss() }
+        } message: {
+            Text("فعّل الميكروفون من إعدادات الجهاز")
+        }
+    }
+
+    @ViewBuilder var controls: some View {
+        if model.state == .idle {
+            VStack(spacing: 12) {
+                Button { Task { await begin() } } label: {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 34))
+                        .foregroundStyle(.white)
+                        .frame(width: 88, height: 88)
+                        .background(Color.red.gradient, in: Circle())
+                }
+                Text("اضغط لبدء التسجيل").font(.footnote).foregroundStyle(.secondary)
+            }
+        } else {
+            HStack(spacing: 30) {
                 Button { model.mark() } label: {
                     Image(systemName: "flag.fill")
                         .font(.title2)
-                        .frame(width: 64, height: 64)
+                        .frame(width: 60, height: 60)
                         .background(Color.orange.opacity(0.15), in: Circle())
                         .foregroundStyle(.orange)
+                }
+                Button { model.togglePause() } label: {
+                    Image(systemName: model.state == .paused ? "mic.fill" : "pause.fill")
+                        .font(.title2)
+                        .frame(width: 60, height: 60)
+                        .background(Theme.accent.opacity(0.15), in: Circle())
+                        .foregroundStyle(Theme.accent)
                 }
                 Button { finish() } label: {
                     Image(systemName: "stop.fill")
@@ -85,18 +162,6 @@ struct RecorderView: View {
                         .background(Color.red.gradient, in: Circle())
                 }
             }
-            Text("اضغط العلم لوضع علامة عند نقطة مهمة")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .padding(.bottom, 24)
-        }
-        .padding()
-        .interactiveDismissDisabled()
-        .task { await begin() }
-        .alert("لا يوجد إذن للميكروفون", isPresented: $denied) {
-            Button("حسنًا") { dismiss() }
-        } message: {
-            Text("فعّل الميكروفون من إعدادات الجهاز")
         }
     }
 
@@ -114,7 +179,7 @@ struct RecorderView: View {
 
     func cancel() {
         model.stop()
-        try? FileManager.default.removeItem(at: Store.root.appendingPathComponent(file))
+        if !file.isEmpty { try? FileManager.default.removeItem(at: Store.root.appendingPathComponent(file)) }
         dismiss()
     }
 }
@@ -128,12 +193,15 @@ final class PlayerModel: ObservableObject {
     var player: AVAudioPlayer?
     var timer: Timer?
 
-    func load(_ url: URL) {
+    func load(_ url: URL, start: Double = 0) {
+        timer?.invalidate()
         try? AVAudioSession.sharedInstance().setCategory(.playback)
         try? AVAudioSession.sharedInstance().setActive(true)
         player = try? AVAudioPlayer(contentsOf: url)
         player?.enableRate = true
         duration = player?.duration ?? 0
+        player?.currentTime = start
+        current = start
         timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -253,7 +321,86 @@ struct PlayerView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle(item.title)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { player.load(store.url(for: item)) }
+        .onAppear { player.load(store.url(for: item), start: item.progress ?? 0) }
+        .onDisappear {
+            store.setProgress(player.current, for: item.id)
+            player.stop()
+        }
+    }
+}
+
+struct MiniPlayer: View {
+    @EnvironmentObject var store: Store
+    @StateObject var player = PlayerModel()
+    @State var expanded = false
+    @State var selected: Item?
+    let subject: UUID
+
+    var recordings: [Item] { store.items(.recording, subject: subject) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if expanded { panel }
+            Button { withAnimation { expanded.toggle() } } label: {
+                Image(systemName: player.playing ? "waveform" : "play.fill")
+                    .font(.title3)
+                    .foregroundStyle(.white)
+                    .frame(width: 52, height: 52)
+                    .background(Theme.accent.gradient, in: Circle())
+                    .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
+            }
+        }
+        .padding()
         .onDisappear { player.stop() }
+    }
+
+    var panel: some View {
+        VStack(spacing: 12) {
+            if let selected {
+                Text(selected.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                Slider(value: Binding(get: { player.current }, set: { player.seek($0) }),
+                       in: 0...max(player.duration, 1))
+                HStack {
+                    Text(clock(player.current)).font(.caption.monospacedDigit())
+                    Spacer()
+                    Button { player.seek(player.current - 15) } label: { Image(systemName: "gobackward.15") }
+                    Button { player.toggle() } label: {
+                        Image(systemName: player.playing ? "pause.circle.fill" : "play.circle.fill").font(.title)
+                    }
+                    Button { player.seek(player.current + 15) } label: { Image(systemName: "goforward.15") }
+                    Spacer()
+                    Button { player.setRate(player.rate == 1 ? 1.5 : player.rate == 1.5 ? 2 : 1) } label: {
+                        Text("\(Double(player.rate), specifier: "%g")×").font(.caption.weight(.semibold))
+                    }
+                }
+                .environment(\.layoutDirection, .leftToRight)
+                Divider()
+            }
+            if recordings.isEmpty {
+                Text("لا توجد تسجيلات لهذه المادة").font(.footnote).foregroundStyle(.secondary)
+            }
+            ForEach(recordings) { recording in
+                Button { play(recording) } label: {
+                    HStack {
+                        Image(systemName: recording.id == selected?.id ? "speaker.wave.2.fill" : "play.fill")
+                            .frame(width: 22)
+                        Text(recording.title).lineLimit(1)
+                        Spacer()
+                    }
+                    .font(.subheadline)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: 320)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    func play(_ recording: Item) {
+        selected = recording
+        player.stop()
+        player.load(store.url(for: recording))
+        player.toggle()
     }
 }
