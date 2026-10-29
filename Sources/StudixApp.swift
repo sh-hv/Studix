@@ -3,11 +3,15 @@ import SwiftUI
 @main
 struct StudixApp: App {
     @StateObject var store = Store()
+    @AppStorage("appLanguage") var language = "system"
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(store)
+                .environment(\.locale, Lang.locale)
+                .environment(\.layoutDirection, Lang.direction)
+                .id(language)
                 .tint(Theme.accent)
         }
     }
