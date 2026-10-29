@@ -13,9 +13,9 @@ enum Reminders {
     static let options = [10080, 4320, 1440, 600, 180, 60]
 
     static func phrase(_ minutes: Int) -> String {
-        if minutes % 1440 == 0 { return String(localized: "\(minutes / 1440) يوم") }
-        if minutes % 60 == 0 { return String(localized: "\(minutes / 60) ساعة") }
-        return String(localized: "\(minutes) دقيقة")
+        if minutes % 1440 == 0 { return Lang.tr("%lld يوم", minutes / 1440) }
+        if minutes % 60 == 0 { return Lang.tr("%lld ساعة", minutes / 60) }
+        return Lang.tr("%lld دقيقة", minutes)
     }
 
     static func schedule(_ deadline: Deadline) {
@@ -27,7 +27,7 @@ enum Reminders {
                 guard fire > Date() else { continue }
                 let content = UNMutableNotificationContent()
                 content.title = deadline.title
-                content.body = String(localized: "باقي \(phrase(minutes)) على الموعد")
+                content.body = Lang.tr("باقي %@ على الموعد", phrase(minutes))
                 content.sound = .default
                 let parts = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: fire)
                 let trigger = UNCalendarNotificationTrigger(dateMatching: parts, repeats: false)
@@ -76,12 +76,12 @@ struct DeadlinesCard: View {
         let calendar = Calendar.current
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: Date()), to: calendar.startOfDay(for: deadline.due)).day ?? 0
         let tint = days <= 2 ? Color.red : Theme.accent
-        let label = days == 0 ? String(localized: "اليوم") : days == 1 ? String(localized: "غدًا") : String(localized: "\(days) يوم")
-        let detail = store.subject(deadline.subjectID)?.name ?? deadline.due.formatted(date: .abbreviated, time: .shortened)
+        let label = days == 0 ? Lang.tr("اليوم") : days == 1 ? Lang.tr("غدًا") : Lang.tr("%lld يوم", days)
+        let detail = store.subject(deadline.subjectID)?.name ?? deadline.due.styled(.abbreviated, .shortened)
         return HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(deadline.title).font(.subheadline.weight(.semibold))
-                Text(detail + " · " + deadline.due.formatted(date: .omitted, time: .shortened))
+                Text(detail + " · " + deadline.due.styled(.omitted, .shortened))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -121,7 +121,7 @@ struct AddDeadlineSheet: View {
                 }
                 Section("ذكّرني") {
                     ForEach(Reminders.options, id: \.self) { minutes in
-                        Toggle(String(localized: "قبل \(Reminders.phrase(minutes))"), isOn: Binding(
+                        Toggle(Lang.tr("قبل %@", Reminders.phrase(minutes)), isOn: Binding(
                             get: { offsets.contains(minutes) },
                             set: { if $0 { offsets.insert(minutes) } else { offsets.remove(minutes) } }
                         ))
