@@ -1,4 +1,4 @@
-import Foundation
+import SwiftUI
 import ZIPFoundation
 
 enum ItemKind: String, Codable, CaseIterable, Identifiable {
@@ -7,9 +7,9 @@ enum ItemKind: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .document: return String(localized: "المستندات")
-        case .recording: return String(localized: "التسجيلات")
-        case .note: return String(localized: "الملاحظات")
+        case .document: return Lang.tr("المستندات")
+        case .recording: return Lang.tr("التسجيلات")
+        case .note: return Lang.tr("الملاحظات")
         }
     }
     var icon: String {
@@ -46,10 +46,10 @@ struct Grade: Codable, Hashable {
 extension Subject {
     var gradeSummary: String? {
         var parts: [String] = []
-        if let theory { parts.append(String(localized: "نظري") + " " + theory.text) }
-        if let practical { parts.append(String(localized: "عملي") + " " + practical.text) }
+        if let theory { parts.append(Lang.tr("نظري") + " " + theory.text) }
+        if let practical { parts.append(Lang.tr("عملي") + " " + practical.text) }
         if let theory, let practical, let a = theory.score, let b = practical.score {
-            parts.append(String(localized: "المجموع") + " " + Grade.fmt(a + b) + "/" + Grade.fmt(theory.max + practical.max))
+            parts.append(Lang.tr("المجموع") + " " + Grade.fmt(a + b) + "/" + Grade.fmt(theory.max + practical.max))
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -66,6 +66,7 @@ struct Item: Identifiable, Codable, Hashable {
     var template: String?
     var text: String?
     var progress: Double?
+    var favorite: Bool?
 }
 
 struct Library: Codable {
@@ -73,15 +74,47 @@ struct Library: Codable {
     var subjects: [Subject] = []
     var items: [Item] = []
     var deadlines: [Deadline]?
+    var todos: [TodoItem]?
 }
 
 enum BackupError: LocalizedError {
     case invalid
-    var errorDescription: String? { String(localized: "الملف ليس نسخة احتياطية صالحة") }
+    var errorDescription: String? { Lang.tr("الملف ليس نسخة احتياطية صالحة") }
 }
 
-func defaultTitle(_ prefix: String.LocalizationValue) -> String {
-    String(localized: prefix) + " " + Date().formatted(.dateTime.day().month().hour().minute())
+enum Lang {
+    static var code: String { UserDefaults.standard.string(forKey: "appLanguage") ?? "system" }
+
+    static var resolved: String {
+        if code != "system" { return code }
+        return Locale.preferredLanguages.first?.hasPrefix("en") == true ? "en" : "ar"
+    }
+
+    static var locale: Locale { Locale(identifier: resolved) }
+    static var direction: LayoutDirection { resolved == "ar" ? .rightToLeft : .leftToRight }
+
+    static var bundle: Bundle {
+        Bundle.main.path(forResource: resolved, ofType: "lproj").flatMap(Bundle.init(path:)) ?? .main
+    }
+
+    static func tr(_ key: String, _ args: CVarArg...) -> String {
+        let template = resolved == "ar" ? key : bundle.localizedString(forKey: key, value: key, table: nil)
+        return args.isEmpty ? template : String(format: template, arguments: args)
+    }
+}
+
+extension Date {
+    func styled(_ date: Date.FormatStyle.DateStyle, _ time: Date.FormatStyle.TimeStyle) -> String {
+        formatted(Date.FormatStyle(date: date, time: time).locale(Lang.locale))
+    }
+}
+
+func dateStamp() -> String {
+    Date().formatted(.dateTime.day().month().hour().minute().locale(Lang.locale))
+}
+
+func defaultTitle(_ prefix: String) -> String {
+    Lang.tr(prefix) + " " + dateStamp()
 }
 
 @MainActor
@@ -120,7 +153,11 @@ final class Store: ObservableObject {
     func items(_ kind: ItemKind, subject: UUID? = nil) -> [Item] {
         library.items
             .filter { $0.kind == kind && (subject == nil || $0.subjectID == subject) }
-            .sorted { $0.date > $1.date }
+            .sorted { first, second in
+                let a = first.favorite ?? false
+                let b = second.favorite ?? false
+                return a != b ? a : first.date > second.date
+            }
     }
 
     func add(_ item: Item) {
@@ -142,6 +179,16 @@ final class Store: ObservableObject {
                 try? FileManager.default.removeItem(at: Self.root.appendingPathComponent(file))
             }
         }
+        if item.file.hasSuffix(".nb"),
+           let data = try? Data(contentsOf: url(for: item)),
+           let notebook = try? JSONDecoder().decode(NotebookContent.self, from: data) {
+            for page in notebook.pages {
+                try? FileManager.default.removeItem(at: Self.root.appendingPathComponent(page.file))
+            }
+        }
+        if item.kind == .document {
+            try? FileManager.default.removeItem(at: url(for: item).deletingPathExtension().appendingPathExtension("ink"))
+        }
         try? FileManager.default.removeItem(at: url(for: item))
         library.items.removeAll { $0.id == item.id }
         save()
@@ -149,6 +196,32 @@ final class Store: ObservableObject {
 
     func addSubject(name: String, colorIndex: Int) {
         library.subjects.append(Subject(name: name, colorIndex: colorIndex))
+        save()
+    }
+
+    var todos: [TodoItem] { library.todos ?? [] }
+
+    func addTodo(_ todo: TodoItem) {
+        library.todos = (library.todos ?? []) + [todo]
+        save()
+    }
+
+    func toggleTodo(_ todo: TodoItem) {
+        guard let index = library.todos?.firstIndex(where: { $0.id == todo.id }) else { return }
+        library.todos?[index].done.toggle()
+        if library.todos?[index].done == true { Reminders.cancelTask(todo) }
+        save()
+    }
+
+    func deleteTodo(_ todo: TodoItem) {
+        Reminders.cancelTask(todo)
+        library.todos?.removeAll { $0.id == todo.id }
+        save()
+    }
+
+    func toggleFavorite(_ item: Item) {
+        guard let index = library.items.firstIndex(where: { $0.id == item.id }) else { return }
+        library.items[index].favorite = !(library.items[index].favorite ?? false)
         save()
     }
 
