@@ -12,7 +12,10 @@ struct SubjectsView: View {
 
     var body: some View {
         ScrollView {
-            if query.isEmpty { DeadlinesCard() }
+            if query.isEmpty {
+                DeadlinesCard()
+                TasksCard()
+            }
             if !query.isEmpty {
                 SearchResults(query: query)
             } else if store.library.subjects.isEmpty {
@@ -229,6 +232,9 @@ struct ItemListView: View {
                         NavigationLink(value: item) { ItemCard(item: item) }
                             .buttonStyle(.plain)
                             .contextMenu {
+                                Button { store.toggleFavorite(item) } label: {
+                                    Label(LocalizedStringKey(item.favorite == true ? "إزالة من المفضلة" : "إضافة للمفضلة"), systemImage: "star")
+                                }
                                 Button { editing = item } label: { Label("تعديل", systemImage: "pencil") }
                                 Button(role: .destructive) { store.delete(item) } label: {
                                     Label("حذف", systemImage: "trash")
@@ -256,7 +262,7 @@ struct ItemListView: View {
         .sheet(isPresented: $showRecorder) { RecorderView(subject: active) }
         .fullScreenCover(item: $opened) { item in
             NavigationStack {
-                NoteEditor(item: item)
+                NoteRouter(item: item)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) { Button("تم") { opened = nil } }
                     }
@@ -270,7 +276,7 @@ struct ItemListView: View {
     var chips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack {
-                chip(String(localized: "الكل"), id: nil)
+                chip(Lang.tr("الكل"), id: nil)
                 ForEach(store.library.subjects) { chip($0.name, id: $0.id) }
             }
         }
@@ -301,6 +307,8 @@ struct ItemListView: View {
                     Button { newNote("blank") } label: { Label("ورقة فارغة", systemImage: "doc") }
                     Button { newNote("ruled") } label: { Label("ورقة مسطّرة", systemImage: "text.alignleft") }
                     Button { newNote("grid") } label: { Label("ورقة مربعات", systemImage: "squareshape.split.3x3") }
+                    Divider()
+                    Button { newNotebook() } label: { Label("دفتر جديد", systemImage: "book.closed") }
                 }
             } label: {
                 Image(systemName: "plus.circle.fill").font(.title3)
@@ -348,6 +356,16 @@ struct ItemListView: View {
         if let document = PDFDocument(url: Store.root.appendingPathComponent(file)) { index(item, document) }
     }
 
+    func newNotebook() {
+        let page = PageInfo(file: store.newFile(ext: "drawing"), template: "ruled")
+        let item = Item(subjectID: active, kind: .note, title: defaultTitle("دفتر"), file: store.newFile(ext: "nb"))
+        if let data = try? JSONEncoder().encode(NotebookContent(pages: [page])) {
+            try? data.write(to: store.url(for: item))
+        }
+        store.add(item)
+        opened = item
+    }
+
     func newNote(_ template: String) {
         let item = Item(subjectID: active, kind: .note, title: defaultTitle("ملاحظة"), file: store.newFile(ext: "note"), template: template)
         store.add(item)
@@ -362,7 +380,7 @@ struct ItemCard: View {
     var body: some View {
         let subject = store.subject(item.subjectID)
         let tint = subject.map { Theme.color($0.colorIndex) } ?? Theme.accent
-        let date = item.date.formatted(date: .abbreviated, time: .omitted)
+        let date = item.date.styled(.abbreviated, .omitted)
         HStack(spacing: 14) {
             Image(systemName: item.kind.icon)
                 .font(.title3.weight(.semibold))
@@ -376,6 +394,7 @@ struct ItemCard: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if item.favorite == true { Image(systemName: "star.fill").foregroundStyle(.yellow) }
             Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
         }
         .padding(14)
@@ -390,7 +409,7 @@ struct ItemDestination: View {
         switch item.kind {
         case .document: PDFScreen(item: item)
         case .recording: PlayerView(item: item)
-        case .note: NoteEditor(item: item)
+        case .note: NoteRouter(item: item)
         }
     }
 }
