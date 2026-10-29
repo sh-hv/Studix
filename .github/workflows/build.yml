@@ -31,6 +31,49 @@ jobs:
           open('Sources/Assets.xcassets/AppIcon.appiconset/icon.png', 'wb').write(png)
           PY
 
+      - name: Check icons
+        run: |
+          D=Sources/Assets.xcassets/AppIcon.appiconset
+          ls -la $D
+          cat $D/Contents.json
+          python3 -m pip install --quiet --break-system-packages pillow
+          python3 - <<'PY'
+          import os
+          from PIL import Image
+          D = 'Sources/Assets.xcassets/AppIcon.appiconset'
+          for name in ['icon.png', 'icon-dark.png']:
+              path = f'{D}/{name}'
+              if not os.path.exists(path):
+                  print('MISSING', name)
+                  continue
+              image = Image.open(path)
+              print(name, image.size, image.mode)
+              changed = False
+              if image.size != (1024, 1024):
+                  image = image.convert('RGBA').resize((1024, 1024), Image.LANCZOS)
+                  changed = True
+              if name == 'icon.png' and ('A' in image.mode or image.mode == 'P'):
+                  image = image.convert('RGBA')
+                  flat = Image.new('RGBA', image.size, (255, 255, 255, 255))
+                  flat.alpha_composite(image)
+                  image = flat.convert('RGB')
+                  changed = True
+              if changed:
+                  image.save(path)
+                  print('fixed', name)
+          PY
+
+      - name: Prepare logo and strings
+        run: |
+          D=Sources/Assets.xcassets/AppIcon.appiconset
+          if [ -f $D/xlogo.png ]; then
+            mkdir -p Sources/Assets.xcassets/XLogo.imageset
+            mv $D/xlogo.png Sources/Assets.xcassets/XLogo.imageset/xlogo.png
+            echo '{"images":[{"filename":"xlogo.png","idiom":"universal"}],"info":{"author":"xcode","version":1},"properties":{"template-rendering-intent":"template"}}' > Sources/Assets.xcassets/XLogo.imageset/Contents.json
+          fi
+          mkdir -p Sources/ar.lproj
+          sed -E 's/^("[^"]*") = .*$/\1 = \1;/' Sources/en.lproj/Localizable.strings > Sources/ar.lproj/Localizable.strings
+
       - name: Generate project
         run: |
           brew install xcodegen
