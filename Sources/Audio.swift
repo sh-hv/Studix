@@ -173,7 +173,8 @@ struct RecorderView: View {
 
     func finish() {
         model.stop()
-        store.add(Item(subjectID: subject, kind: .recording, title: defaultTitle("تسجيل"), file: file, marks: model.marks))
+        let title = store.subject(subject).map { $0.name + " · " + dateStamp() } ?? defaultTitle("تسجيل")
+        store.add(Item(subjectID: subject, kind: .recording, title: title, file: file, marks: model.marks))
         dismiss()
     }
 
