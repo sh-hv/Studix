@@ -1,6 +1,16 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct XLogo: View {
+    var body: some View {
+        if UIImage(named: "XLogo") != nil {
+            Image("XLogo").renderingMode(.template).resizable().scaledToFit().frame(width: 18, height: 18)
+        } else {
+            Image(systemName: "at").frame(width: 18, height: 18)
+        }
+    }
+}
+
 struct ShareFile: Identifiable {
     let id = UUID()
     let url: URL
@@ -18,6 +28,7 @@ struct ShareSheet: UIViewControllerRepresentable {
 
 struct SettingsView: View {
     @EnvironmentObject var store: Store
+    @AppStorage("appLanguage") var language = "system"
     @State var shareItem: ShareFile?
     @State var pickedURL: URL?
     @State var importing = false
@@ -39,6 +50,14 @@ struct SettingsView: View {
                 Text("تُحفظ كل مواد الدراسة والمستندات والتسجيلات والملاحظات في ملف مضغوط واحد.")
             }
 
+            Section("اللغة") {
+                Picker("اللغة", selection: $language) {
+                    Text("تلقائي (حسب الجوال)").tag("system")
+                    Text("العربية").tag("ar")
+                    Text("English").tag("en")
+                }
+            }
+
             Section("الإحصائيات") {
                 LabeledContent("المواد", value: "\(store.library.subjects.count)")
                 ForEach(ItemKind.allCases) { kind in
@@ -48,6 +67,18 @@ struct SettingsView: View {
 
             Section {
                 LabeledContent("الإصدار", value: version)
+            }
+
+            Section("تابعني") {
+                Link(destination: URL(string: "https://x.com/sh_hhv")!) {
+                    HStack(spacing: 10) {
+                        XLogo()
+                        Text("Spidey").fontWeight(.semibold)
+                        Spacer()
+                        Image(systemName: "arrow.up.right").font(.footnote).foregroundStyle(.tertiary)
+                    }
+                    .foregroundStyle(.primary)
+                }
             }
         }
         .navigationTitle("الإعدادات")
@@ -82,7 +113,7 @@ struct SettingsView: View {
         defer { if granted { url.stopAccessingSecurityScopedResource() } }
         do {
             try store.restore(from: url)
-            message = String(localized: "تم الاسترجاع بنجاح")
+            message = Lang.tr("تم الاسترجاع بنجاح")
         } catch {
             message = error.localizedDescription
         }
