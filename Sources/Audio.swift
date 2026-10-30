@@ -2,7 +2,7 @@ import SwiftUI
 import AVFoundation
 
 func clock(_ time: Double) -> String {
-    String(format: "%02d:%02d", Int(time) / 60, Int(time) % 60)
+    String(format: "%02d:%02d", locale: Lang.locale, arguments: [Int(time) / 60, Int(time) % 60])
 }
 
 @MainActor
