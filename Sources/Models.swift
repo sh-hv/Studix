@@ -34,7 +34,9 @@ struct Grade: Codable, Hashable {
     var score: Double?
 
     static func fmt(_ value: Double) -> String {
-        value.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(value)) : String(format: "%.1f", value)
+        value.truncatingRemainder(dividingBy: 1) == 0
+            ? String(format: "%d", locale: Lang.locale, Int(value))
+            : String(format: "%.1f", locale: Lang.locale, value)
     }
 
     var text: String {
@@ -99,7 +101,26 @@ enum Lang {
 
     static func tr(_ key: String, _ args: CVarArg...) -> String {
         let template = resolved == "ar" ? key : bundle.localizedString(forKey: key, value: key, table: nil)
-        return args.isEmpty ? template : String(format: template, arguments: args)
+        return args.isEmpty ? template : String(format: template, locale: locale, arguments: args)
+    }
+}
+
+private var languageBundleKey: UInt8 = 0
+
+final class LanguageBundle: Bundle {
+    override func localizedString(forKey key: String, value: String?, table tableName: String?) -> String {
+        if let bundle = objc_getAssociatedObject(self, &languageBundleKey) as? Bundle {
+            return bundle.localizedString(forKey: key, value: value, table: tableName)
+        }
+        return super.localizedString(forKey: key, value: value, table: tableName)
+    }
+}
+
+extension Bundle {
+    static func setLanguage(_ code: String) {
+        object_setClass(Bundle.main, LanguageBundle.self)
+        let path = Bundle.main.path(forResource: code, ofType: "lproj")
+        objc_setAssociatedObject(Bundle.main, &languageBundleKey, path.flatMap(Bundle.init(path:)), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     }
 }
 
@@ -178,16 +199,6 @@ final class Store: ObservableObject {
             for file in note.blocks.compactMap(\.file) {
                 try? FileManager.default.removeItem(at: Self.root.appendingPathComponent(file))
             }
-        }
-        if item.file.hasSuffix(".nb"),
-           let data = try? Data(contentsOf: url(for: item)),
-           let notebook = try? JSONDecoder().decode(NotebookContent.self, from: data) {
-            for page in notebook.pages {
-                try? FileManager.default.removeItem(at: Self.root.appendingPathComponent(page.file))
-            }
-        }
-        if item.kind == .document {
-            try? FileManager.default.removeItem(at: url(for: item).deletingPathExtension().appendingPathExtension("ink"))
         }
         try? FileManager.default.removeItem(at: url(for: item))
         library.items.removeAll { $0.id == item.id }
