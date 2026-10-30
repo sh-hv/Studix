@@ -5,13 +5,18 @@ struct StudixApp: App {
     @StateObject var store = Store()
     @AppStorage("appLanguage") var language = "system"
 
+    var languageToken: String {
+        Bundle.setLanguage(Lang.resolved)
+        return language
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(store)
                 .environment(\.locale, Lang.locale)
                 .environment(\.layoutDirection, Lang.direction)
-                .id(language)
+                .id(languageToken)
                 .tint(Theme.accent)
         }
     }
