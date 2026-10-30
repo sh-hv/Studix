@@ -99,3 +99,16 @@
 "القيمة" = "Value";
 "اضغط للرسم" = "Tap to draw";
 "أدخل أرقامك في البيانات" = "Enter your numbers under Data";
+"المهام" = "Tasks";
+"عرض الكل" = "View all";
+"لا توجد مهام" = "No tasks";
+"مهمة جديدة" = "New Task";
+"عنوان المهمة" = "Task title";
+"تحديد موعد" = "Set due date";
+"منجزة" = "Completed";
+"موعد المهمة الآن" = "Task is due now";
+"اللغة" = "Language";
+"تلقائي (حسب الجوال)" = "Automatic (device language)";
+"تابعني" = "Follow";
+"إضافة للمفضلة" = "Add to favorites";
+"إزالة من المفضلة" = "Remove from favorites";
