@@ -3,56 +3,38 @@ import PencilKit
 import PhotosUI
 import Charts
 
-func paperPath(_ template: String, size: CGSize) -> Path {
-    let step: CGFloat = 32
-    var path = Path()
-    switch template {
-    case "ruled", "grid":
-        for y in stride(from: step * 2, to: size.height, by: step) {
-            path.move(to: CGPoint(x: 0, y: y))
-            path.addLine(to: CGPoint(x: size.width, y: y))
-        }
-        if template == "grid" {
-            for x in stride(from: step, to: size.width, by: step) {
-                path.move(to: CGPoint(x: x, y: 0))
-                path.addLine(to: CGPoint(x: x, y: size.height))
-            }
-        }
-    case "dots":
-        for y in stride(from: step, to: size.height, by: step) {
-            for x in stride(from: step, to: size.width, by: step) {
-                path.addEllipse(in: CGRect(x: x - 1, y: y - 1, width: 2, height: 2))
-            }
-        }
-    case "cornell":
-        path.move(to: CGPoint(x: size.width * 0.3, y: 0))
-        path.addLine(to: CGPoint(x: size.width * 0.3, y: size.height * 0.85))
-        path.move(to: CGPoint(x: 0, y: size.height * 0.85))
-        path.addLine(to: CGPoint(x: size.width, y: size.height * 0.85))
-    default:
-        break
-    }
-    return path
-}
-
 struct PaperBackground: View {
     let template: String
 
     var body: some View {
         Canvas { context, size in
-            context.stroke(paperPath(template, size: size), with: .color(.secondary.opacity(0.3)), lineWidth: 1)
+            let step: CGFloat = 32
+            var path = Path()
+            if template == "ruled" || template == "grid" {
+                for y in stride(from: step * 2, to: size.height, by: step) {
+                    path.move(to: CGPoint(x: 0, y: y))
+                    path.addLine(to: CGPoint(x: size.width, y: y))
+                }
+            }
+            if template == "grid" {
+                for x in stride(from: step, to: size.width, by: step) {
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: size.height))
+                }
+            }
+            context.stroke(path, with: .color(.secondary.opacity(0.25)), lineWidth: 1)
         }
         .background(Color(.systemBackground))
+        .ignoresSafeArea()
     }
 }
 
 struct CanvasView: UIViewRepresentable {
     @Binding var drawing: PKDrawing
-    var anyInput = true
 
     func makeUIView(context: Context) -> PKCanvasView {
         let canvas = PKCanvasView()
-        canvas.drawingPolicy = anyInput ? .anyInput : .pencilOnly
+        canvas.drawingPolicy = .anyInput
         canvas.backgroundColor = .clear
         canvas.isOpaque = false
         canvas.drawing = drawing
@@ -65,9 +47,7 @@ struct CanvasView: UIViewRepresentable {
         return canvas
     }
 
-    func updateUIView(_ canvas: PKCanvasView, context: Context) {
-        canvas.drawingPolicy = anyInput ? .anyInput : .pencilOnly
-    }
+    func updateUIView(_ canvas: PKCanvasView, context: Context) {}
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
