@@ -262,7 +262,7 @@ struct ItemListView: View {
         .sheet(isPresented: $showRecorder) { RecorderView(subject: active) }
         .fullScreenCover(item: $opened) { item in
             NavigationStack {
-                NoteRouter(item: item)
+                NoteEditor(item: item)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) { Button("تم") { opened = nil } }
                     }
@@ -307,8 +307,6 @@ struct ItemListView: View {
                     Button { newNote("blank") } label: { Label("ورقة فارغة", systemImage: "doc") }
                     Button { newNote("ruled") } label: { Label("ورقة مسطّرة", systemImage: "text.alignleft") }
                     Button { newNote("grid") } label: { Label("ورقة مربعات", systemImage: "squareshape.split.3x3") }
-                    Divider()
-                    Button { newNotebook() } label: { Label("دفتر جديد", systemImage: "book.closed") }
                 }
             } label: {
                 Image(systemName: "plus.circle.fill").font(.title3)
@@ -356,16 +354,6 @@ struct ItemListView: View {
         if let document = PDFDocument(url: Store.root.appendingPathComponent(file)) { index(item, document) }
     }
 
-    func newNotebook() {
-        let page = PageInfo(file: store.newFile(ext: "drawing"), template: "ruled")
-        let item = Item(subjectID: active, kind: .note, title: defaultTitle("دفتر"), file: store.newFile(ext: "nb"))
-        if let data = try? JSONEncoder().encode(NotebookContent(pages: [page])) {
-            try? data.write(to: store.url(for: item))
-        }
-        store.add(item)
-        opened = item
-    }
-
     func newNote(_ template: String) {
         let item = Item(subjectID: active, kind: .note, title: defaultTitle("ملاحظة"), file: store.newFile(ext: "note"), template: template)
         store.add(item)
@@ -409,7 +397,7 @@ struct ItemDestination: View {
         switch item.kind {
         case .document: PDFScreen(item: item)
         case .recording: PlayerView(item: item)
-        case .note: NoteRouter(item: item)
+        case .note: NoteEditor(item: item)
         }
     }
 }
