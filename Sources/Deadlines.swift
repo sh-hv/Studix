@@ -20,6 +20,7 @@ enum Reminders {
 
     static func schedule(_ deadline: Deadline) {
         let center = UNUserNotificationCenter.current()
+        cancel(deadline)
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }
             for minutes in deadline.offsets ?? [] {
@@ -31,13 +32,23 @@ enum Reminders {
                 content.sound = .default
                 let parts = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: fire)
                 let trigger = UNCalendarNotificationTrigger(dateMatching: parts, repeats: false)
-                center.add(UNNotificationRequest(identifier: "\(deadline.id)-\(minutes)", content: content, trigger: trigger))
+                center.add(UNNotificationRequest(identifier: "deadline-\(deadline.id)-\(minutes)", content: content, trigger: trigger))
             }
         }
     }
 
+    static func reschedule(deadlines: [Deadline], todos: [TodoItem]) {
+        let center = UNUserNotificationCenter.current()
+        let identifiers = deadlines.flatMap { deadline in
+            (deadline.offsets ?? []).flatMap { ["deadline-\(deadline.id)-\($0)", "\(deadline.id)-\($0)"] }
+        } + todos.map { "task-\($0.id)" }
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
+        deadlines.forEach(schedule)
+        todos.filter { !$0.done }.forEach(scheduleTask)
+    }
+
     static func cancel(_ deadline: Deadline) {
-        let identifiers = (deadline.offsets ?? []).map { "\(deadline.id)-\($0)" }
+        let identifiers = (deadline.offsets ?? []).flatMap { ["deadline-\(deadline.id)-\($0)", "\(deadline.id)-\($0)"] }
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: identifiers)
     }
 }
@@ -65,9 +76,8 @@ struct DeadlinesCard: View {
             }
             ForEach(upcoming) { row($0) }
         }
-        .padding(16)
+        .studixSurface(radius: 22, padding: 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .padding([.horizontal, .top])
         .sheet(isPresented: $adding) { AddDeadlineSheet() }
     }

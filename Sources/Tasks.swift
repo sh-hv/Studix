@@ -11,7 +11,8 @@ struct TodoItem: Identifiable, Codable, Hashable {
 
 extension Reminders {
     static func scheduleTask(_ todo: TodoItem) {
-        guard let due = todo.due, due > Date() else { return }
+        cancelTask(todo)
+        guard let due = todo.due, due > Date(), !todo.done else { return }
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }
@@ -77,9 +78,8 @@ struct TasksCard: View {
             }
             ForEach(open) { TaskRow(todo: $0) }
         }
-        .padding(16)
+        .studixSurface(radius: 22, padding: 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .padding([.horizontal, .top])
         .sheet(isPresented: $adding) { AddTaskSheet() }
     }

@@ -135,6 +135,7 @@ struct NoteEditor: View {
         }
         .onAppear(perform: load)
         .onDisappear(perform: save)
+        .onChange(of: blocks) { _ in save() }
         .onChange(of: phase) { if $0 != .active { save() } }
     }
 

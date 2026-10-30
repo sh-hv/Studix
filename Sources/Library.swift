@@ -13,8 +13,16 @@ struct SubjectsView: View {
     var body: some View {
         ScrollView {
             if query.isEmpty {
+                DashboardHero(
+                    subjectCount: store.library.subjects.count,
+                    itemCount: store.library.items.count,
+                    taskCount: store.todos.filter { !$0.done }.count
+                )
                 DeadlinesCard()
                 TasksCard()
+                SectionHeading(title: "موادك الدراسية", subtitle: "كل مادة تجمع ملفاتك وملاحظاتك وتسجيلاتك")
+                    .padding(.horizontal)
+                    .padding(.top, 8)
             }
             if !query.isEmpty {
                 SearchResults(query: query)
@@ -71,13 +79,19 @@ struct SubjectCard: View {
             }
         }
         .foregroundStyle(.white)
-        .frame(maxWidth: .infinity, minHeight: 140, alignment: .leading)
-        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 154, alignment: .leading)
+        .padding(17)
         .background(
             LinearGradient(colors: [tint, tint.opacity(0.65)], startPoint: .topLeading, endPoint: .bottomTrailing),
             in: RoundedRectangle(cornerRadius: 24, style: .continuous)
         )
-        .shadow(color: tint.opacity(0.3), radius: 10, y: 5)
+        .overlay(alignment: .topTrailing) {
+            Image(systemName: "arrow.up.left")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white.opacity(0.8))
+                .padding(12)
+        }
+        .shadow(color: tint.opacity(0.22), radius: 12, y: 6)
     }
 }
 
@@ -385,8 +399,7 @@ struct ItemCard: View {
             if item.favorite == true { Image(systemName: "star.fill").foregroundStyle(.yellow) }
             Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
         }
-        .padding(14)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .studixSurface(radius: 20, padding: 14)
     }
 }
 

@@ -13,6 +13,7 @@ final class RecorderModel: ObservableObject {
     @Published var marks: [Double] = []
     @Published var levels: [Float] = []
     @Published var state = State.idle
+    @Published var errorMessage: String?
     var recorder: AVAudioRecorder?
     var timer: Timer?
 
@@ -20,24 +21,39 @@ final class RecorderModel: ObservableObject {
         let granted = await withCheckedContinuation { continuation in
             AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
         }
-        guard granted else { return false }
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-        try? session.setActive(true)
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 44100,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-        ]
-        recorder = try? AVAudioRecorder(url: url, settings: settings)
-        recorder?.isMeteringEnabled = true
-        guard recorder?.record() == true else { return false }
-        state = .recording
-        timer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+        guard granted else {
+            errorMessage = Lang.tr("يرجى السماح بالوصول إلى الميكروفون من إعدادات الجهاز")
+            return false
         }
-        return true
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+            try session.setActive(true)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            let settings: [String: Any] = [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 44100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+            ]
+            let newRecorder = try AVAudioRecorder(url: url, settings: settings)
+            newRecorder.isMeteringEnabled = true
+            guard newRecorder.record() else { throw NSError(domain: "Studix.Audio", code: 1, userInfo: [NSLocalizedDescriptionKey: Lang.tr("تعذر بدء التسجيل")]) }
+            recorder = newRecorder
+            errorMessage = nil
+            state = .recording
+            timer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+                Task { @MainActor in self?.tick() }
+            }
+            return true
+        } catch {
+            recorder = nil
+            state = .idle
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            errorMessage = error.localizedDescription
+            return false
+        }
     }
 
     func tick() {
@@ -54,19 +70,44 @@ final class RecorderModel: ObservableObject {
         if state == .recording {
             recorder.pause()
             state = .paused
-        } else {
-            recorder.record()
+        } else if recorder.record() {
             state = .recording
         }
     }
 
     func mark() { marks.append(elapsed) }
 
+    func handleInterruption(_ notification: Notification) {
+        guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
+        if type == .began {
+            if state == .recording {
+                recorder?.pause()
+                state = .paused
+            }
+        } else if type == .ended, state == .paused {
+            let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
+            guard options.contains(.shouldResume) else { return }
+            do {
+                try AVAudioSession.sharedInstance().setActive(true)
+                if recorder?.record() == true {
+                    state = .recording
+                } else {
+                    errorMessage = Lang.tr("انقطع التسجيل ولم نتمكن من استكماله")
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     func stop() {
         recorder?.stop()
         timer?.invalidate()
+        timer = nil
         state = .idle
-        try? AVAudioSession.sharedInstance().setActive(false)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }
 
@@ -119,10 +160,14 @@ struct RecorderView: View {
         }
         .padding()
         .interactiveDismissDisabled(model.state != .idle)
-        .alert("لا يوجد إذن للميكروفون", isPresented: $denied) {
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { notification in
+            model.handleInterruption(notification)
+            if model.errorMessage != nil { denied = true }
+        }
+        .alert("تعذر بدء التسجيل", isPresented: $denied) {
             Button("حسنًا") { dismiss() }
         } message: {
-            Text("فعّل الميكروفون من إعدادات الجهاز")
+            Text(model.errorMessage ?? Lang.tr("تحقق من إذن الميكروفون وحاول مرة أخرى"))
         }
     }
 
@@ -168,11 +213,22 @@ struct RecorderView: View {
     func begin() async {
         file = store.newFile(ext: "m4a")
         let started = await model.start(to: Store.root.appendingPathComponent(file))
-        if !started { denied = true }
+        if !started {
+            try? FileManager.default.removeItem(at: Store.root.appendingPathComponent(file))
+            file = ""
+            denied = true
+        }
     }
 
     func finish() {
         model.stop()
+        let recordingURL = Store.root.appendingPathComponent(file)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: recordingURL.path)
+        let fileSize = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+        guard !file.isEmpty, fileSize > 0 else {
+            dismiss()
+            return
+        }
         let title = store.subject(subject).map { $0.name + " · " + dateStamp() } ?? defaultTitle("تسجيل")
         store.add(Item(subjectID: subject, kind: .recording, title: title, file: file, marks: model.marks))
         dismiss()
@@ -191,18 +247,29 @@ final class PlayerModel: ObservableObject {
     @Published var duration: Double = 0
     @Published var playing = false
     @Published var rate: Float = 1
+    @Published var errorMessage: String?
     var player: AVAudioPlayer?
     var timer: Timer?
 
     func load(_ url: URL, start: Double = 0) {
         timer?.invalidate()
-        try? AVAudioSession.sharedInstance().setCategory(.playback)
-        try? AVAudioSession.sharedInstance().setActive(true)
-        player = try? AVAudioPlayer(contentsOf: url)
-        player?.enableRate = true
-        duration = player?.duration ?? 0
-        player?.currentTime = start
-        current = start
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default)
+            try session.setActive(true)
+            let audioPlayer = try AVAudioPlayer(contentsOf: url)
+            audioPlayer.enableRate = true
+            player = audioPlayer
+            duration = audioPlayer.duration
+            audioPlayer.currentTime = min(max(start, 0), audioPlayer.duration)
+            current = audioPlayer.currentTime
+            errorMessage = nil
+        } catch {
+            player = nil
+            duration = 0
+            current = 0
+            errorMessage = error.localizedDescription
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -243,6 +310,9 @@ final class PlayerModel: ObservableObject {
     func stop() {
         player?.stop()
         timer?.invalidate()
+        timer = nil
+        playing = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }
 
@@ -323,6 +393,14 @@ struct PlayerView: View {
         .navigationTitle(item.title)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { player.load(store.url(for: item), start: item.progress ?? 0) }
+        .alert("تعذر تشغيل التسجيل", isPresented: Binding(
+            get: { player.errorMessage != nil },
+            set: { if !$0 { player.errorMessage = nil } }
+        )) {
+            Button("حسنًا", role: .cancel) { player.errorMessage = nil }
+        } message: {
+            Text(player.errorMessage ?? "")
+        }
         .onDisappear {
             store.setProgress(player.current, for: item.id)
             player.stop()
