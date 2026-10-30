@@ -1,104 +1,99 @@
-name: Build
+name: Build and Validate Studix
+
 on:
   push:
     branches: [main]
     paths:
-      - .github/workflows/build.yml
+      - 'Sources/**'
+      - 'project.yml'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
+
 permissions:
   contents: write
+
+env:
+  SCHEME: Studix
+  PROJECT: Studix.xcodeproj
+
 jobs:
   build:
-    runs-on: macos-latest
+    name: Build iOS app
+    runs-on: macos-15
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Prepare icon
+      - name: Verify Xcode toolchain
         run: |
-          D=Sources/Assets.xcassets/AppIcon.appiconset
-          mkdir -p $D
-          [ -f $D/Contents.json ] || echo '{"images":[{"filename":"icon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}' > $D/Contents.json
-          [ -f Sources/Assets.xcassets/Contents.json ] || echo '{"info":{"author":"xcode","version":1}}' > Sources/Assets.xcassets/Contents.json
-          [ -f $D/icon.png ] || python3 - <<'PY'
-          import zlib, struct
-          n = 1024
-          def row(y):
-              return b'\x00' + bytes(c for x in range(n) for c in (30 + x * 50 // n, 90 + y * 60 // n, 230 - y * 60 // n))
-          def chunk(t, d):
-              return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d))
-          raw = b''.join(row(y) for y in range(n))
-          png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', n, n, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
-          open('Sources/Assets.xcassets/AppIcon.appiconset/icon.png', 'wb').write(png)
-          PY
+          xcode-select -p
+          xcodebuild -version
 
-      - name: Check icons
+      - name: Prepare asset catalogs
         run: |
-          D=Sources/Assets.xcassets/AppIcon.appiconset
-          ls -la $D
-          cat $D/Contents.json
-          python3 -m pip install --quiet --break-system-packages pillow
-          python3 - <<'PY'
-          import os
-          from PIL import Image
-          D = 'Sources/Assets.xcassets/AppIcon.appiconset'
-          for name in ['icon.png', 'icon-dark.png']:
-              path = f'{D}/{name}'
-              if not os.path.exists(path):
-                  print('MISSING', name)
-                  continue
-              image = Image.open(path)
-              print(name, image.size, image.mode)
-              changed = False
-              if image.size != (1024, 1024):
-                  image = image.convert('RGBA').resize((1024, 1024), Image.LANCZOS)
-                  changed = True
-              if name == 'icon.png' and ('A' in image.mode or image.mode == 'P'):
-                  image = image.convert('RGBA')
-                  flat = Image.new('RGBA', image.size, (255, 255, 255, 255))
-                  flat.alpha_composite(image)
-                  image = flat.convert('RGB')
-                  changed = True
-              if changed:
-                  image.save(path)
-                  print('fixed', name)
-          PY
+          mkdir -p Sources/Assets.xcassets/AppIcon.appiconset
+          [ -f Sources/Assets.xcassets/Contents.json ] || printf '{"info":{"author":"xcode","version":1}}\n' > Sources/Assets.xcassets/Contents.json
+          [ -f Sources/Assets.xcassets/AppIcon.appiconset/Contents.json ] || printf '{"images":[{"filename":"icon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}\n' > Sources/Assets.xcassets/AppIcon.appiconset/Contents.json
+          test -f Sources/Assets.xcassets/AppIcon.appiconset/icon.png
 
-      - name: Prepare logo and strings
+      - name: Prepare localized resources
         run: |
-          D=Sources/Assets.xcassets/AppIcon.appiconset
-          if [ -f $D/xlogo.png ]; then
-            mkdir -p Sources/Assets.xcassets/XLogo.imageset
-            mv $D/xlogo.png Sources/Assets.xcassets/XLogo.imageset/xlogo.png
-            echo '{"images":[{"filename":"xlogo.png","idiom":"universal"}],"info":{"author":"xcode","version":1},"properties":{"template-rendering-intent":"template"}}' > Sources/Assets.xcassets/XLogo.imageset/Contents.json
-          fi
           mkdir -p Sources/ar.lproj
-          sed -E 's/^("[^"]*") = .*$/\1 = \1;/' Sources/en.lproj/Localizable.strings > Sources/ar.lproj/Localizable.strings
+          if [ -f Sources/en.lproj/Localizable.strings ]; then
+            sed -E 's/^("[^"]*") = .*$/\1 = \1;/' Sources/en.lproj/Localizable.strings > Sources/ar.lproj/Localizable.strings
+          fi
+          [ -f Sources/Assets.xcassets/Contents.json ]
 
-      - name: Generate project
-        run: |
-          brew install xcodegen
-          xcodegen generate
+      - name: Install XcodeGen
+        run: brew install xcodegen
 
-      - name: Build
-        run: |
-          xcodebuild -project Studix.xcodeproj -scheme Studix -configuration Release \
-            -sdk iphoneos -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            CURRENT_PROJECT_VERSION=${{ github.run_number }} build > build.log 2>&1 || { grep -E "error:" build.log | sort -u | head -20; exit 1; }
+      - name: Generate Xcode project
+        run: xcodegen generate
 
-      - name: Package IPA
+      - name: Resolve Swift packages
+        run: xcodebuild -resolvePackageDependencies -project "$PROJECT" -scheme "$SCHEME"
+
+      - name: Build for iOS device
+        shell: bash
         run: |
+          set -o pipefail
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
+            build 2>&1 | tee build.log
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="build/Build/Products/Release-iphoneos/Studix.app"
+          test -d "$APP_PATH"
+          rm -rf Payload Studix.ipa
           mkdir Payload
-          cp -R build/Build/Products/Release-iphoneos/Studix.app Payload/
-          zip -qr Studix.ipa Payload
+          cp -R "$APP_PATH" Payload/
+          /usr/bin/zip -qry Studix-unsigned.ipa Payload
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: Studix
-          path: Studix.ipa
+          name: Studix-unsigned-${{ github.run_number }}
+          path: Studix-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
 
-      - uses: softprops/action-gh-release@v2
+      - name: Publish GitHub release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Studix ${{ github.run_number }}
-          files: Studix.ipa
+          name: Studix build ${{ github.run_number }}
+          files: Studix-unsigned.ipa
+          generate_release_notes: true
