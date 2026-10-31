@@ -16,7 +16,7 @@ enum PDFMaker {
 struct DocumentScanner: UIViewControllerRepresentable {
     let onFinish: ([UIImage]) -> Void
     var onError: ((String) -> Void)? = nil
-    @Environment(\\.dismiss) private var dismiss
+    @Environment(\.dismiss) private var dismiss
 
     func makeUIViewController(context: Context) -> VNDocumentCameraViewController {
         let controller = VNDocumentCameraViewController()
