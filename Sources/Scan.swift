@@ -1,4 +1,5 @@
 import SwiftUI
+import PDFKit
 import CoreImage
 
 enum ScanFilter: String, CaseIterable, Identifiable {
@@ -24,7 +25,14 @@ struct ScanBatch: Identifiable {
 extension UIImage {
     var upright: UIImage {
         guard imageOrientation != .up else { return self }
-        return UIGraphicsImageRenderer(size: size).image { _ in
+        // Render at the image's own scale. The renderer's default is the screen scale (3x),
+        // which would make a 12 MP photo about nine times larger in memory.
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
             draw(in: CGRect(origin: .zero, size: size))
         }
     }
@@ -57,30 +65,45 @@ enum ScanProcessor {
         guard let result = context.createCGImage(output, from: output.extent) else { return image }
         return UIImage(cgImage: result)
     }
+
+    /// Applies the filters to several images off the main thread.
+    static func render(_ images: [UIImage], filter: ScanFilter, brightness: Double, contrast: Double) async -> [UIImage] {
+        await Task.detached(priority: .userInitiated) {
+            images.map { apply($0, filter: filter, brightness: brightness, contrast: contrast) }
+        }.value
+    }
 }
 
 struct ScanEditor: View {
     @Environment(\.dismiss) var dismiss
     @State var pages: [UIImage]
     @State var thumbs: [UIImage]
+    @State var previews: [UIImage]
     @State var filter = ScanFilter.document
     @State var brightness = 0.0
     @State var contrast = 1.0
     @State var current = 0
-    let onSave: ([UIImage]) -> Void
+    @State var saving = false
+    let onSave: (PDFDocument) async -> Void
 
-    init(pages: [UIImage], onSave: @escaping ([UIImage]) -> Void) {
+    init(pages: [UIImage], onSave: @escaping (PDFDocument) async -> Void) {
+        let small = pages.map { $0.preparingThumbnail(of: CGSize(width: 900, height: 1300)) ?? $0 }
         _pages = State(initialValue: pages)
-        _thumbs = State(initialValue: pages.map { $0.preparingThumbnail(of: CGSize(width: 900, height: 1300)) ?? $0 })
+        _thumbs = State(initialValue: small)
+        _previews = State(initialValue: small)
         self.onSave = onSave
+    }
+
+    private var renderKey: String {
+        "\(filter.rawValue)|\(brightness)|\(contrast)|\(thumbs.count)"
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 14) {
                 TabView(selection: $current) {
-                    ForEach(thumbs.indices, id: \.self) { index in
-                        Image(uiImage: ScanProcessor.apply(thumbs[index], filter: filter, brightness: brightness, contrast: contrast))
+                    ForEach(previews.indices, id: \.self) { index in
+                        Image(uiImage: previews[index])
                             .resizable()
                             .scaledToFit()
                             .padding(.horizontal)
@@ -107,13 +130,40 @@ struct ScanEditor: View {
                 }
             }
             .padding()
-            .navigationTitle("\(thumbs.count)")
+            .disabled(saving)
+            .overlay {
+                if saving {
+                    ProgressView()
+                        .controlSize(.large)
+                        .padding(26)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
+            }
+            // Filters are applied to small previews off the main thread, and only when a setting changes.
+            .task(id: renderKey) {
+                let snapshot = thumbs
+                let chosen = filter
+                let chosenBrightness = brightness
+                let chosenContrast = contrast
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                guard !Task.isCancelled else { return }
+                let rendered = await ScanProcessor.render(snapshot, filter: chosen, brightness: chosenBrightness, contrast: chosenContrast)
+                guard !Task.isCancelled, rendered.count == thumbs.count else { return }
+                previews = rendered
+            }
+            .navigationTitle("\(thumbs.count) صفحة")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("حفظ") { save() } }
-                ToolbarItem(placement: .cancellationAction) { Button("إلغاء") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("حفظ") { save() }.disabled(saving)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("إلغاء") { dismiss() }.disabled(saving)
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button(role: .destructive) { removeCurrent() } label: { Image(systemName: "trash") }
+                        .disabled(saving)
+                        .accessibilityLabel(Text("حذف الصفحة"))
                 }
             }
         }
@@ -126,11 +176,24 @@ struct ScanEditor: View {
         }
         pages.remove(at: current)
         thumbs.remove(at: current)
+        if previews.indices.contains(current) { previews.remove(at: current) }
         current = min(current, pages.count - 1)
     }
 
     func save() {
-        onSave(pages.map { ScanProcessor.apply($0, filter: filter, brightness: brightness, contrast: contrast) })
-        dismiss()
+        guard !saving else { return }
+        saving = true
+        let images = pages
+        let chosen = filter
+        let chosenBrightness = brightness
+        let chosenContrast = contrast
+        Task { @MainActor in
+            // Pages are processed and written one at a time off the main thread to keep memory low.
+            let document = await Task.detached(priority: .userInitiated) {
+                PDFMaker.make(images, filter: chosen, brightness: chosenBrightness, contrast: chosenContrast)
+            }.value
+            await onSave(document)
+            dismiss()
+        }
     }
 }

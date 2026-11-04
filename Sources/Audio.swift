@@ -135,12 +135,13 @@ struct RecorderView: View {
     @StateObject var model = RecorderModel()
     @State var file = ""
     @State var denied = false
+    @State var confirmingCancel = false
     let subject: UUID?
 
     var body: some View {
         VStack(spacing: 28) {
             HStack {
-                Button("إلغاء") { cancel() }
+                Button("إلغاء") { requestCancel() }
                 Spacer()
             }
             Spacer()
@@ -169,6 +170,22 @@ struct RecorderView: View {
         } message: {
             Text(model.errorMessage ?? Lang.tr("تحقق من إذن الميكروفون وحاول مرة أخرى"))
         }
+        .confirmationDialog("ماذا تفعل بالتسجيل الحالي؟", isPresented: $confirmingCancel, titleVisibility: .visible) {
+            Button("حفظ التسجيل") { finish() }
+            Button("حذف التسجيل", role: .destructive) { cancel() }
+            Button("متابعة التسجيل", role: .cancel) {}
+        } message: {
+            Text("إذا حذفته فلن تتمكن من استرجاعه")
+        }
+    }
+
+    /// Leaving an empty recorder is harmless, but never throw away a recording without asking.
+    func requestCancel() {
+        if model.state == .idle || model.elapsed < 1 {
+            cancel()
+        } else {
+            confirmingCancel = true
+        }
     }
 
     @ViewBuilder var controls: some View {
@@ -181,6 +198,7 @@ struct RecorderView: View {
                         .frame(width: 88, height: 88)
                         .background(Color.red.gradient, in: Circle())
                 }
+                .accessibilityLabel(Text("بدء التسجيل"))
                 Text("اضغط لبدء التسجيل").font(.footnote).foregroundStyle(.secondary)
             }
         } else {
@@ -192,6 +210,7 @@ struct RecorderView: View {
                         .background(Color.orange.opacity(0.15), in: Circle())
                         .foregroundStyle(.orange)
                 }
+                .accessibilityLabel(Text("إضافة علامة"))
                 Button { model.togglePause() } label: {
                     Image(systemName: model.state == .paused ? "mic.fill" : "pause.fill")
                         .font(.title2)
@@ -199,6 +218,7 @@ struct RecorderView: View {
                         .background(Theme.accent.opacity(0.15), in: Circle())
                         .foregroundStyle(Theme.accent)
                 }
+                .accessibilityLabel(Text(LocalizedStringKey(model.state == .paused ? "استئناف التسجيل" : "إيقاف مؤقت")))
                 Button { finish() } label: {
                     Image(systemName: "stop.fill")
                         .font(.largeTitle)
@@ -206,6 +226,7 @@ struct RecorderView: View {
                         .frame(width: 88, height: 88)
                         .background(Color.red.gradient, in: Circle())
                 }
+                .accessibilityLabel(Text("إنهاء وحفظ التسجيل"))
             }
         }
     }
@@ -261,7 +282,9 @@ final class PlayerModel: ObservableObject {
             audioPlayer.enableRate = true
             player = audioPlayer
             duration = audioPlayer.duration
-            audioPlayer.currentTime = min(max(start, 0), audioPlayer.duration)
+            // A recording that was played to the end starts over instead of resuming on its last second.
+            let safeStart = audioPlayer.duration - start < 2 ? 0 : start
+            audioPlayer.currentTime = min(max(safeStart, 0), audioPlayer.duration)
             current = audioPlayer.currentTime
             errorMessage = nil
         } catch {
@@ -345,11 +368,14 @@ struct PlayerView: View {
                     }
                     HStack(spacing: 36) {
                         Button { player.seek(player.current - 15) } label: { Image(systemName: "gobackward.15") }
+                            .accessibilityLabel(Text("رجوع 15 ثانية"))
                         Button { player.toggle() } label: {
                             Image(systemName: player.playing ? "pause.circle.fill" : "play.circle.fill")
                                 .font(.system(size: 72))
                         }
+                        .accessibilityLabel(Text(LocalizedStringKey(player.playing ? "إيقاف مؤقت" : "تشغيل")))
                         Button { player.seek(player.current + 15) } label: { Image(systemName: "goforward.15") }
+                            .accessibilityLabel(Text("تقديم 15 ثانية"))
                     }
                     .font(.title)
                 }
@@ -428,6 +454,7 @@ struct MiniPlayer: View {
                     .background(Theme.accent.gradient, in: Circle())
                     .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
             }
+            .accessibilityLabel(Text("تسجيلات المادة"))
         }
         .padding()
         .onDisappear { player.stop() }
@@ -443,10 +470,13 @@ struct MiniPlayer: View {
                     Text(clock(player.current)).font(.caption.monospacedDigit())
                     Spacer()
                     Button { player.seek(player.current - 15) } label: { Image(systemName: "gobackward.15") }
+                        .accessibilityLabel(Text("رجوع 15 ثانية"))
                     Button { player.toggle() } label: {
                         Image(systemName: player.playing ? "pause.circle.fill" : "play.circle.fill").font(.title)
                     }
+                    .accessibilityLabel(Text(LocalizedStringKey(player.playing ? "إيقاف مؤقت" : "تشغيل")))
                     Button { player.seek(player.current + 15) } label: { Image(systemName: "goforward.15") }
+                        .accessibilityLabel(Text("تقديم 15 ثانية"))
                     Spacer()
                     Button { player.setRate(player.rate == 1 ? 1.5 : player.rate == 1.5 ? 2 : 1) } label: {
                         Text("\(Double(player.rate), specifier: "%g")×").font(.caption.weight(.semibold))

@@ -4,9 +4,9 @@ import UniformTypeIdentifiers
 struct XLogo: View {
     var body: some View {
         if UIImage(named: "XLogo") != nil {
-            Image("XLogo").renderingMode(.template).resizable().scaledToFit().frame(width: 18, height: 18)
+            Image("XLogo").renderingMode(.template).resizable().scaledToFit().frame(width: 22, height: 22)
         } else {
-            Image(systemName: "at").frame(width: 18, height: 18)
+            Image(systemName: "at").frame(width: 22, height: 22)
         }
     }
 }
@@ -33,6 +33,7 @@ struct SettingsView: View {
     @State var pickedURL: URL?
     @State var importing = false
     @State var confirming = false
+    @State var working = false
     @State var message: String?
 
     var version: String {
@@ -85,9 +86,12 @@ struct SettingsView: View {
                     Picker("اللغة", selection: $language) {
                         Text("تلقائي (حسب الجوال)").tag("system")
                         Text("العربية").tag("ar")
-                        Text("English").tag("en")
+                        Text("الإنجليزية").tag("en")
                     }
                     .pickerStyle(.segmented)
+                    Text("لتحديث عناصر النظام مثل زر «تعديل» وحقل البحث، أعد فتح التطبيق بعد تغيير اللغة")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .studixSurface()
 
@@ -120,6 +124,15 @@ struct SettingsView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("الإعدادات")
         .navigationBarTitleDisplayMode(.large)
+        .disabled(working)
+        .overlay {
+            if working {
+                ProgressView()
+                    .controlSize(.large)
+                    .padding(26)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+        }
         .sheet(item: $shareItem) { ShareSheet(url: $0.url) }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.zip]) { result in
             if case .success(let url) = result {
@@ -140,22 +153,36 @@ struct SettingsView: View {
     }
 
     func makeBackup() {
-        do {
-            shareItem = ShareFile(url: try store.backup())
-        } catch {
-            message = error.localizedDescription
+        guard !working else { return }
+        working = true
+        Task { @MainActor in
+            defer { working = false }
+            do {
+                shareItem = ShareFile(url: try await store.backup())
+            } catch {
+                message = error.localizedDescription
+            }
         }
     }
 
     func restore() {
-        guard let url = pickedURL else { return }
-        let granted = url.startAccessingSecurityScopedResource()
-        defer { if granted { url.stopAccessingSecurityScopedResource() } }
-        do {
-            try store.restore(from: url)
-            message = Lang.tr("تم الاسترجاع بنجاح")
-        } catch {
-            message = error.localizedDescription
+        guard let url = pickedURL, !working else { return }
+        working = true
+        Task { @MainActor in
+            // Keep access to the picked file open for the whole restore.
+            let granted = url.startAccessingSecurityScopedResource()
+            defer {
+                if granted { url.stopAccessingSecurityScopedResource() }
+                working = false
+            }
+            do {
+                let skipped = try await store.restore(from: url)
+                message = skipped > 0
+                    ? Lang.tr("تم الاسترجاع، لكن %lld عنصر لم نجد ملفاته داخل النسخة فتم تخطيه", skipped)
+                    : Lang.tr("تم الاسترجاع بنجاح")
+            } catch {
+                message = error.localizedDescription
+            }
         }
     }
 }
@@ -163,8 +190,8 @@ struct SettingsView: View {
 
 private struct SettingsActionRow: View {
     let icon: String
-    let title: String
-    let detail: String
+    let title: LocalizedStringKey
+    let detail: LocalizedStringKey
     let tint: Color
 
     var body: some View {
@@ -186,7 +213,7 @@ private struct SettingsActionRow: View {
 }
 
 private struct SettingsMetric: View {
-    let title: String
+    let title: LocalizedStringKey
     let value: Int
     let icon: String
     let tint: Color

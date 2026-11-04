@@ -1,9 +1,15 @@
 import SwiftUI
+import UserNotifications
 
 @main
 struct StudixApp: App {
     @StateObject var store = Store()
     @AppStorage("appLanguage") var language = "system"
+
+    init() {
+        Lang.applySystemLanguage()
+        UNUserNotificationCenter.current().delegate = NotificationDelegate.shared
+    }
 
     var languageToken: String {
         Bundle.setLanguage(Lang.resolved)
@@ -18,6 +24,7 @@ struct StudixApp: App {
                 .environment(\.layoutDirection, Lang.direction)
                 .id(languageToken)
                 .tint(Theme.accent)
+                .onChange(of: language) { _ in Lang.applySystemLanguage() }
         }
     }
 }
@@ -55,7 +62,8 @@ struct RootView: View {
         }
         .tint(Theme.accent)
         .toolbarBackground(.visible, for: .tabBar)
-        .alert("تعذر حفظ بعض البيانات", isPresented: Binding(
+        .task { await store.indexPending() }
+        .alert("تنبيه", isPresented: Binding(
             get: { store.persistenceError != nil },
             set: { if !$0 { store.dismissPersistenceError() } }
         )) {

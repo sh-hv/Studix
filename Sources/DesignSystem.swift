@@ -31,7 +31,7 @@ struct DashboardHero: View {
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
         if hour < 12 { return Lang.tr("صباح الخير") }
-        if hour < 18 { return Lang.tr("مساء النشاط") }
+        if hour < 18 { return Lang.tr("نهارك سعيد") }
         return Lang.tr("مساء الخير")
     }
 
@@ -86,7 +86,7 @@ struct DashboardHero: View {
         .padding(.top, 8)
     }
 
-    private func metric(value: Int, title: String, icon: String) -> some View {
+    private func metric(value: Int, title: LocalizedStringKey, icon: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Label(title, systemImage: icon)
                 .font(.caption2.weight(.medium))
@@ -100,8 +100,8 @@ struct DashboardHero: View {
 }
 
 struct SectionHeading: View {
-    let title: String
-    var subtitle: String? = nil
+    let title: LocalizedStringKey
+    var subtitle: LocalizedStringKey? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.system(.title3, design: .rounded, weight: .bold))

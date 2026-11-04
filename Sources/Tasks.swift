@@ -9,28 +9,6 @@ struct TodoItem: Identifiable, Codable, Hashable {
     var subjectID: UUID?
 }
 
-extension Reminders {
-    static func scheduleTask(_ todo: TodoItem) {
-        cancelTask(todo)
-        guard let due = todo.due, due > Date(), !todo.done else { return }
-        let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            guard granted else { return }
-            let content = UNMutableNotificationContent()
-            content.title = todo.title
-            content.body = Lang.tr("موعد المهمة الآن")
-            content.sound = .default
-            let parts = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: due)
-            let trigger = UNCalendarNotificationTrigger(dateMatching: parts, repeats: false)
-            center.add(UNNotificationRequest(identifier: "task-\(todo.id)", content: content, trigger: trigger))
-        }
-    }
-
-    static func cancelTask(_ todo: TodoItem) {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["task-\(todo.id)"])
-    }
-}
-
 struct TaskRow: View {
     @EnvironmentObject var store: Store
     let todo: TodoItem
@@ -48,6 +26,7 @@ struct TaskRow: View {
                     .foregroundStyle(todo.done ? Color.green : Theme.accent)
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel(Text(LocalizedStringKey(todo.done ? "إلغاء الإنجاز" : "إتمام المهمة")))
             VStack(alignment: .leading, spacing: 2) {
                 Text(todo.title)
                     .strikethrough(todo.done)
@@ -72,6 +51,7 @@ struct TasksCard: View {
                 Spacer()
                 NavigationLink { TasksView() } label: { Text("عرض الكل").font(.footnote) }
                 Button { adding = true } label: { Image(systemName: "plus") }
+                    .accessibilityLabel(Text("إضافة مهمة"))
             }
             if open.isEmpty {
                 Text("لا توجد مهام").font(.footnote).foregroundStyle(.secondary)
@@ -116,6 +96,7 @@ struct TasksView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { adding = true } label: { Image(systemName: "plus.circle.fill") }
+                    .accessibilityLabel(Text("إضافة مهمة"))
             }
         }
         .sheet(isPresented: $adding) { AddTaskSheet() }
@@ -159,7 +140,6 @@ struct AddTaskSheet: View {
     func save() {
         let todo = TodoItem(title: title.trimmingCharacters(in: .whitespaces), due: hasDue ? due : nil, subjectID: subjectID)
         store.addTodo(todo)
-        Reminders.scheduleTask(todo)
         dismiss()
     }
 }

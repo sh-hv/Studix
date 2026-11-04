@@ -6,12 +6,16 @@ enum OCR {
     static func text(from document: PDFDocument) async -> String {
         await Task.detached(priority: .utility) {
             var parts: [String] = []
-            for index in 0..<min(document.pageCount, 60) {
+            var recognizedPages = 0
+            for index in 0..<min(document.pageCount, 500) {
                 guard let page = document.page(at: index) else { continue }
+                // Pages that already contain text are cheap. Only image pages go through OCR, up to a cap.
                 if let embedded = page.string, embedded.count > 20 {
                     parts.append(embedded)
                     continue
                 }
+                guard recognizedPages < 80 else { continue }
+                recognizedPages += 1
                 let image = page.thumbnail(of: CGSize(width: 1400, height: 1900), for: .mediaBox)
                 parts.append(recognize(image))
             }
@@ -37,8 +41,10 @@ struct SearchResults: View {
     let query: String
 
     var matches: [Item] {
-        store.library.items
-            .filter { $0.title.localizedCaseInsensitiveContains(query) || ($0.text?.localizedCaseInsensitiveContains(query) ?? false) }
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return [] }
+        return store.library.items
+            .filter { $0.title.localizedCaseInsensitiveContains(term) || store.searchText(for: $0.id).localizedCaseInsensitiveContains(term) }
             .sorted { $0.date > $1.date }
     }
 
