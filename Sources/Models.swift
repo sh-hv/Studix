@@ -189,6 +189,8 @@ func defaultTitle(_ prefix: String) -> String {
 final class Store: ObservableObject {
     @Published private(set) var library = Library()
     @Published private(set) var persistenceError: String?
+    /// Describes the current restore step so a long restore never looks frozen.
+    @Published private(set) var restoreStatus: String?
 
     static let root = FileManager.default
         .urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -508,24 +510,46 @@ final class Store: ObservableObject {
     @discardableResult
     func restore(from zip: URL) async throws -> Int {
         let fm = FileManager.default
-        let staging = fm.temporaryDirectory.appendingPathComponent("Studix-Restore-\(UUID().uuidString)", isDirectory: true)
-        let previous = fm.temporaryDirectory.appendingPathComponent("Studix-Previous-\(UUID().uuidString)", isDirectory: true)
+        let token = UUID().uuidString
+        let localZip = fm.temporaryDirectory.appendingPathComponent("Studix-Restore-\(token).zip")
+        let staging = fm.temporaryDirectory.appendingPathComponent("Studix-Restore-\(token)", isDirectory: true)
+        let previous = fm.temporaryDirectory.appendingPathComponent("Studix-Previous-\(token)", isDirectory: true)
         var preservePrevious = false
         defer {
+            restoreStatus = nil
+            try? fm.removeItem(at: localZip)
             try? fm.removeItem(at: staging)
             if !preservePrevious { try? fm.removeItem(at: previous) }
         }
 
-        // Unzipping and validation can be slow, so they run off the main thread.
+        // Every slow step runs off the main thread and reports where it is.
+        restoreStatus = Lang.tr("جارٍ نسخ الملف…")
+        try await Task.detached(priority: .userInitiated) {
+            try Self.copyForRestore(zip, to: localZip)
+        }.value
+
+        restoreStatus = Lang.tr("جارٍ فحص النسخة…")
+        try await Task.detached(priority: .userInitiated) {
+            try Self.inspectArchive(localZip)
+        }.value
+
+        restoreStatus = Lang.tr("جارٍ فك الضغط…")
+        try await Task.detached(priority: .userInitiated) {
+            try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+            try FileManager.default.unzipItem(at: localZip, to: staging)
+        }.value
+
+        restoreStatus = Lang.tr("جارٍ التحقق من البيانات…")
         let prepared = try await Task.detached(priority: .userInitiated) {
-            try Self.prepareRestore(zip: zip, staging: staging)
+            try Self.loadStaged(staging)
         }.value
 
         // Swap only after the archive and all referenced files have been validated.
+        restoreStatus = Lang.tr("جارٍ استبدال البيانات…")
         let hadCurrentData = fm.fileExists(atPath: Self.root.path)
         if hadCurrentData { try fm.moveItem(at: Self.root, to: previous) }
         do {
-            try fm.moveItem(at: staging, to: Self.root)
+            try fm.moveItem(at: prepared.folder, to: Self.root)
         } catch {
             if hadCurrentData, !fm.fileExists(atPath: Self.root.path) {
                 do {
@@ -548,9 +572,23 @@ final class Store: ObservableObject {
         return prepared.skipped
     }
 
-    nonisolated private static func prepareRestore(zip: URL, staging: URL) throws -> (library: Library, skipped: Int) {
-        let fm = FileManager.default
-        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+    /// Copies the picked file into the app first. The coordinated read also downloads iCloud files
+    /// that are not on the device yet, which a plain read cannot do.
+    nonisolated private static func copyForRestore(_ source: URL, to destination: URL) throws {
+        var coordinationError: NSError?
+        var copyError: Error?
+        NSFileCoordinator(filePresenter: nil).coordinate(readingItemAt: source, options: [], error: &coordinationError) { readable in
+            do {
+                try FileManager.default.copyItem(at: readable, to: destination)
+            } catch {
+                copyError = error
+            }
+        }
+        if let coordinationError { throw coordinationError }
+        if let copyError { throw copyError }
+    }
+
+    nonisolated private static func inspectArchive(_ zip: URL) throws {
         let archive: Archive
         do {
             archive = try Archive(url: zip, accessMode: .read)
@@ -565,8 +603,8 @@ final class Store: ObservableObject {
             expandedBytes = newTotal
             let components = entry.path.split(separator: "/")
             guard !overflow,
-                  entryCount <= 10_000,
-                  expandedBytes <= 1_500_000_000,
+                  entryCount <= 50_000,
+                  expandedBytes <= 20_000_000_000,
                   entry.type != .symlink,
                   !entry.path.hasPrefix("/"),
                   !entry.path.contains("\\"),
@@ -576,10 +614,24 @@ final class Store: ObservableObject {
             }
         }
         guard entryCount > 0 else { throw BackupError.invalid }
-        try fm.unzipItem(at: zip, to: staging)
+    }
 
-        let stagedIndex = staging.appendingPathComponent("index.json")
-        guard let data = try? Data(contentsOf: stagedIndex),
+    /// Finds the folder that holds index.json. Backups zipped again by the Files app often
+    /// wrap everything in one extra folder, so that case is accepted too.
+    nonisolated private static func loadStaged(_ staging: URL) throws -> (library: Library, skipped: Int, folder: URL) {
+        let fm = FileManager.default
+        var base = staging
+        if !fm.fileExists(atPath: base.appendingPathComponent("index.json").path) {
+            let children = ((try? fm.contentsOfDirectory(at: staging, includingPropertiesForKeys: [.isDirectoryKey])) ?? [])
+                .filter { $0.lastPathComponent != "__MACOSX" && !$0.lastPathComponent.hasPrefix(".") }
+            if children.count == 1,
+               (try? children[0].resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+               fm.fileExists(atPath: children[0].appendingPathComponent("index.json").path) {
+                base = children[0]
+            }
+        }
+
+        guard let data = try? Data(contentsOf: base.appendingPathComponent("index.json")),
               var restored = try? JSONDecoder().decode(Library.self, from: data),
               restored.version <= 1 else {
             throw BackupError.invalid
@@ -591,12 +643,12 @@ final class Store: ObservableObject {
         var skipped = 0
         for item in restored.items {
             guard isSafeFileName(item.file) else { throw BackupError.invalid }
-            guard fm.fileExists(atPath: staging.appendingPathComponent(item.file).path) else {
+            guard fm.fileExists(atPath: base.appendingPathComponent(item.file).path) else {
                 skipped += 1
                 continue
             }
             if item.kind == .note,
-               let noteData = try? Data(contentsOf: staging.appendingPathComponent(item.file)),
+               let noteData = try? Data(contentsOf: base.appendingPathComponent(item.file)),
                let note = try? JSONDecoder().decode(NoteContent.self, from: noteData) {
                 for file in note.blocks.compactMap(\.file) where !isSafeFileName(file) {
                     throw BackupError.invalid
@@ -605,7 +657,7 @@ final class Store: ObservableObject {
             kept.append(item)
         }
         restored.items = kept
-        return (restored, skipped)
+        return (restored, skipped, base)
     }
 
     nonisolated private static func isSafeFileName(_ name: String) -> Bool {
