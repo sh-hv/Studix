@@ -197,3 +197,8 @@
 "تعذر حفظ الملاحظة" = "Couldn't save the note";
 "تعذر حفظ الرسم" = "Couldn't save the drawing";
 "تأكد من توفر مساحة تخزين كافية ثم حاول مرة أخرى." = "Make sure there is enough storage and try again.";
+"جارٍ نسخ الملف…" = "Copying the file…";
+"جارٍ فحص النسخة…" = "Checking the backup…";
+"جارٍ فك الضغط…" = "Unpacking…";
+"جارٍ التحقق من البيانات…" = "Verifying the data…";
+"جارٍ استبدال البيانات…" = "Replacing your data…";
