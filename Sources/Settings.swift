@@ -127,25 +127,39 @@ struct SettingsView: View {
         .disabled(working)
         .overlay {
             if working {
-                ProgressView()
-                    .controlSize(.large)
-                    .padding(26)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                VStack(spacing: 12) {
+                    ProgressView().controlSize(.large)
+                    if let status = store.restoreStatus {
+                        Text(status).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(26)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
         }
         .sheet(item: $shareItem) { ShareSheet(url: $0.url) }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.zip]) { result in
-            if case .success(let url) = result {
-                pickedURL = url
-                confirming = true
-            } else if case .failure(let error) = result {
-                message = error.localizedDescription
+        // The file picker and the confirmation dialog each get their own anchor view. Stacking a picker,
+        // a dialog and an alert on one view makes iOS drop or freeze whichever appears right after another closes.
+        .background {
+            Color.clear.fileImporter(isPresented: $importing, allowedContentTypes: [.zip, .data]) { result in
+                switch result {
+                case .success(let url):
+                    pickedURL = url
+                    // Let the picker finish closing before the dialog opens.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { confirming = true }
+                case .failure(let error):
+                    if (error as? CocoaError)?.code != .userCancelled {
+                        message = error.localizedDescription
+                    }
+                }
             }
         }
-        .confirmationDialog("استرجاع نسخة احتياطية", isPresented: $confirming, titleVisibility: .visible) {
-            Button("استبدال البيانات الحالية", role: .destructive) { restore() }
-        } message: {
-            Text("سيتم استبدال كل بياناتك الحالية بمحتوى النسخة بعد التحقق من سلامتها.")
+        .background {
+            Color.clear.confirmationDialog("استرجاع نسخة احتياطية", isPresented: $confirming, titleVisibility: .visible) {
+                Button("استبدال البيانات الحالية", role: .destructive) { restore() }
+            } message: {
+                Text("سيتم استبدال كل بياناتك الحالية بمحتوى النسخة بعد التحقق من سلامتها.")
+            }
         }
         .alert(message ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("حسنًا", role: .cancel) {}
