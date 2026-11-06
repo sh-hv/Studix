@@ -16,6 +16,45 @@ struct ShareFile: Identifiable {
     let url: URL
 }
 
+/// System file picker that hands back a copy inside the app, so there is no security scope to manage
+/// and iCloud files are downloaded before the app gets them.
+struct DocumentPicker: UIViewControllerRepresentable {
+    let types: [UTType]
+    let onPick: (URL) -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick, onCancel: onCancel)
+    }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
+        picker.allowsMultipleSelection = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: (URL) -> Void
+        let onCancel: () -> Void
+
+        init(onPick: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
+            self.onPick = onPick
+            self.onCancel = onCancel
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            if let url = urls.first { onPick(url) } else { onCancel() }
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onCancel()
+        }
+    }
+}
+
 struct ShareSheet: UIViewControllerRepresentable {
     let url: URL
 
@@ -138,20 +177,21 @@ struct SettingsView: View {
             }
         }
         .sheet(item: $shareItem) { ShareSheet(url: $0.url) }
-        // The file picker and the confirmation dialog each get their own anchor view. Stacking a picker,
-        // a dialog and an alert on one view makes iOS drop or freeze whichever appears right after another closes.
+        // The picker and the confirmation dialog each live on their own anchor view, so iOS never has to
+        // close one presentation and open the next on the same view.
         .background {
-            Color.clear.fileImporter(isPresented: $importing, allowedContentTypes: [.zip, .data]) { result in
-                switch result {
-                case .success(let url):
-                    pickedURL = url
-                    // Let the picker finish closing before the dialog opens.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { confirming = true }
-                case .failure(let error):
-                    if (error as? CocoaError)?.code != .userCancelled {
-                        message = error.localizedDescription
-                    }
-                }
+            Color.clear.sheet(isPresented: $importing) {
+                DocumentPicker(
+                    types: [.zip, .data],
+                    onPick: { url in
+                        importing = false
+                        pickedURL = url
+                        // Let the picker finish closing before the dialog opens.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { confirming = true }
+                    },
+                    onCancel: { importing = false }
+                )
+                .ignoresSafeArea()
             }
         }
         .background {
@@ -187,6 +227,8 @@ struct SettingsView: View {
             let granted = url.startAccessingSecurityScopedResource()
             defer {
                 if granted { url.stopAccessingSecurityScopedResource() }
+                // The picker gave us a temporary copy, so it can go once the restore is over.
+                if url.path.contains("/tmp/") { try? FileManager.default.removeItem(at: url) }
                 working = false
             }
             do {
