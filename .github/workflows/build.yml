@@ -27,6 +27,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Select Xcode 26 (required for .icon files)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26'
+
       - name: Verify Xcode toolchain
         run: |
           xcode-select -p
@@ -34,10 +39,9 @@ jobs:
 
       - name: Prepare asset catalogs
         run: |
-          mkdir -p Sources/Assets.xcassets/AppIcon.appiconset
           [ -f Sources/Assets.xcassets/Contents.json ] || printf '{"info":{"author":"xcode","version":1}}\n' > Sources/Assets.xcassets/Contents.json
-          [ -f Sources/Assets.xcassets/AppIcon.appiconset/Contents.json ] || printf '{"images":[{"filename":"icon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}\n' > Sources/Assets.xcassets/AppIcon.appiconset/Contents.json
-          test -f Sources/Assets.xcassets/AppIcon.appiconset/icon.png
+          test -f Sources/AppIcon.icon/icon.json
+          test -d Sources/AppIcon.icon/Assets
 
       - name: Prepare localized resources
         run: |
