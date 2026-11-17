@@ -39,6 +39,7 @@ jobs:
 
       - name: Prepare asset catalogs
         run: |
+          mkdir -p Sources/Assets.xcassets
           [ -f Sources/Assets.xcassets/Contents.json ] || printf '{"info":{"author":"xcode","version":1}}\n' > Sources/Assets.xcassets/Contents.json
           test -f Sources/AppIcon.icon/icon.json
           test -d Sources/AppIcon.icon/Assets
