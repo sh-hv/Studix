@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import PDFKit
+import AVFoundation
 import UniformTypeIdentifiers
 
 struct SubjectsView: View {
@@ -9,7 +10,12 @@ struct SubjectsView: View {
     @State var query = ""
     @State var editingSubject: Subject?
     @State var subjectToDelete: Subject?
-    let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+    @Environment(\.horizontalSizeClass) var sizeClass
+    var columns: [GridItem] {
+        sizeClass == .regular
+            ? [GridItem(.adaptive(minimum: 200, maximum: 320), spacing: 14)]
+            : [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+    }
 
     var body: some View {
         ScrollView {
@@ -21,6 +27,7 @@ struct SubjectsView: View {
                 )
                 DeadlinesCard()
                 TasksCard()
+                FocusCard()
                 SectionHeading(title: "موادك الدراسية", subtitle: "كل مادة تجمع ملفاتك وملاحظاتك وتسجيلاتك")
                     .padding(.horizontal)
                     .padding(.top, 8)
@@ -266,6 +273,7 @@ struct ItemListView: View {
     @State var showRecorder = false
     @State var showPhotos = false
     @State var showImporter = false
+    @State var showAudioImporter = false
     @State var photos: [PhotosPickerItem] = []
     @State var batch: ScanBatch?
     @State var pendingScan: [UIImage]?
@@ -332,7 +340,33 @@ struct ItemListView: View {
             }
         }
         .photosPicker(isPresented: $showPhotos, selection: $photos, matching: .images)
-        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.pdf]) { importPDF($0) }
+        // Each picker sits on its own anchor view so the Menu can close before the picker opens.
+        .background {
+            Color.clear.sheet(isPresented: $showImporter) {
+                DocumentPicker(
+                    types: [.pdf],
+                    onPick: { url in
+                        showImporter = false
+                        importPDF(url)
+                    },
+                    onCancel: { showImporter = false }
+                )
+                .ignoresSafeArea()
+            }
+        }
+        .background {
+            Color.clear.sheet(isPresented: $showAudioImporter) {
+                DocumentPicker(
+                    types: [.audio],
+                    onPick: { url in
+                        showAudioImporter = false
+                        importAudio(url)
+                    },
+                    onCancel: { showAudioImporter = false }
+                )
+                .ignoresSafeArea()
+            }
+        }
         .onChange(of: photos) { picked in loadPhotos(picked) }
     }
 
@@ -360,8 +394,13 @@ struct ItemListView: View {
 
     @ViewBuilder var addButton: some View {
         if kind == .recording {
-            Button { showRecorder = true } label: { Image(systemName: "mic.circle.fill").font(.title3) }
-                .accessibilityLabel(Text("تسجيل جديد"))
+            Menu {
+                Button { showRecorder = true } label: { Label("تسجيل جديد", systemImage: "mic") }
+                Button { showAudioImporter = true } label: { Label("استيراد ملف صوتي", systemImage: "square.and.arrow.down") }
+            } label: {
+                Image(systemName: "mic.circle.fill").font(.title3)
+            }
+            .accessibilityLabel(Text("تسجيل جديد"))
         } else {
             Menu {
                 if kind == .document {
@@ -428,16 +467,8 @@ struct ItemListView: View {
         }
     }
 
-    func importPDF(_ result: Result<URL, Error>) {
-        let url: URL
-        switch result {
-        case .success(let picked): url = picked
-        case .failure(let error):
-            store.reportError(error.localizedDescription)
-            return
-        }
-        let granted = url.startAccessingSecurityScopedResource()
-        defer { if granted { url.stopAccessingSecurityScopedResource() } }
+    /// `url` is already a private copy made by the picker, so no security scope is needed.
+    func importPDF(_ url: URL) {
         let file = store.newFile(ext: "pdf")
         let destination = Store.root.appendingPathComponent(file)
         do {
@@ -454,6 +485,25 @@ struct ItemListView: View {
         let item = Item(subjectID: active, kind: .document, title: url.deletingPathExtension().lastPathComponent, file: file)
         store.add(item)
         index(item, document)
+    }
+
+    func importAudio(_ url: URL) {
+        let ext = url.pathExtension.isEmpty ? "m4a" : url.pathExtension.lowercased()
+        let file = store.newFile(ext: ext)
+        let destination = Store.root.appendingPathComponent(file)
+        do {
+            try FileManager.default.copyItem(at: url, to: destination)
+        } catch {
+            store.reportError(error.localizedDescription)
+            return
+        }
+        guard (try? AVAudioPlayer(contentsOf: destination)) != nil else {
+            try? FileManager.default.removeItem(at: destination)
+            store.reportError(Lang.tr("الملف المحدد ليس ملفًا صوتيًا صالحًا"))
+            return
+        }
+        let title = url.deletingPathExtension().lastPathComponent
+        store.add(Item(subjectID: active, kind: .recording, title: title, file: file))
     }
 
     func newNote(_ template: String) {
