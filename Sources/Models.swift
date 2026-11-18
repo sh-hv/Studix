@@ -139,7 +139,17 @@ enum Lang {
         }
     }
 
-    static var locale: Locale { Locale(identifier: resolved) }
+    /// The app language decides the words; the phone decides 12- or 24-hour time.
+    static var locale: Locale {
+        var components = Locale.Components(locale: Locale(identifier: resolved))
+        components.hourCycle = deviceUses24Hour ? .zeroToTwentyThree : .oneToTwelve
+        return Locale(components: components)
+    }
+
+    static var deviceUses24Hour: Bool {
+        let format = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: Locale.current) ?? ""
+        return !format.contains("a")
+    }
     static var direction: LayoutDirection { resolved == "ar" ? .rightToLeft : .leftToRight }
 
     static var bundle: Bundle {
